@@ -1,0 +1,68 @@
+{
+  "name": "zeroai-mall",
+  "version": "2.2.1",
+  "author": "zeroai",
+  "scripts": {
+    "dev": "vite",
+    "build:dev": "vite build --mode development",
+    "build:prod": "vite build --mode production",
+    "lint": "eslint \"src/**/*.{js,vue}\"",
+    "test:node": "node --test tests",
+    "svgo": "svgo -f src/icons/svg --config=src/icons/svgo.config.cjs"
+  },
+  "dependencies": {
+    "@better-scroll/core": "^2.2.0",
+    "@fortawesome/fontawesome-svg-core": "^1.2.34",
+    "@fortawesome/free-brands-svg-icons": "^5.15.2",
+    "@fortawesome/free-solid-svg-icons": "^5.15.2",
+    "@fortawesome/vue-fontawesome": "^3.0.0-5",
+    "@vant/area-data": "^2.1.0",
+    "axios": "^1.16.1",
+    "core-js": "^3.10.1",
+    "dayjs": "^1.10.4",
+    "js-cookie": "^3.0.7",
+    "lodash": "^4.18.1",
+    "normalize.css": "^8.0.1",
+    "qs": "^6.15.2",
+    "vant": "^4.9.24",
+    "vue": "^3.5.35",
+    "vue-clipboard3": "^2.0.0",
+    "vue-content-loader": "^2.0.1",
+    "vue-router": "^4.2.4",
+    "vue-scrollto": "^2.20.0",
+    "vuex": "^4.1.0",
+    "weixin-js-sdk": "^1.6.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "eslint": "^10.4.0",
+    "eslint-plugin-vue": "^10.9.1",
+    "globals": "^16.5.0",
+    "postcss-preset-env": "^11.3.0",
+    "postcss-pxtorem": "^6.1.0",
+    "sass": "^1.100.0",
+    "svgo": "^4.0.1",
+    "terser": "^5.48.0",
+    "vite": "^6.4.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead"
+  ],
+  "keywords": [
+    "vue",
+    "vue-template",
+    "panda-vue-template",
+    "panda-mall"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zeroai525/zeroai-mobile"
+  }
+}

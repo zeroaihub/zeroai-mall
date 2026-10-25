@@ -1,0 +1,23 @@
+package com.zeroai.domain.api.goods.service;
+
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.spring.service.IService;
+import com.zeroai.domain.api.goods.entity.Column;
+
+/**
+ * 首页栏目配置 服务类
+ *
+ * @since 2020-10-10
+ */
+public interface IColumnService extends IService<Column> {
+
+    /**
+     * 查询栏目分页列表
+     *
+     * @param page   分页对象
+     * @param column 查询参数
+     * @return 栏目分页列表
+     */
+    IPage<Column> listPage(Page<Column> page, Column column);
+}

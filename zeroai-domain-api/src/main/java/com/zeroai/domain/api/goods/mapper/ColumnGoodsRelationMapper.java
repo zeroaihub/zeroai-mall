@@ -1,0 +1,14 @@
+package com.zeroai.domain.api.goods.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.zeroai.domain.api.goods.entity.ColumnGoodsRelation;
+
+/**
+ * 栏目商品关联表 Mapper 接口
+ *
+ * @since 2020-10-10
+ */
+public interface ColumnGoodsRelationMapper extends BaseMapper<ColumnGoodsRelation> {
+
+    Integer getGoodsNum(Long columnId);
+}

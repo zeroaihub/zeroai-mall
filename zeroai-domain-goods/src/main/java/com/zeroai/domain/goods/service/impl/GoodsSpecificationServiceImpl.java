@@ -1,0 +1,48 @@
+package com.zeroai.domain.goods.service.impl;
+
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
+import com.zeroai.domain.api.goods.entity.GoodsSpecification;
+import com.zeroai.domain.api.goods.mapper.GoodsSpecificationMapper;
+import com.zeroai.domain.api.goods.service.IGoodsSpecificationService;
+import com.zeroai.domain.api.goods.response.SpecificationVO;
+import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 商品规格表 服务实现类
+ *
+ * @since 2020-07-06
+ */
+@Service
+public class GoodsSpecificationServiceImpl extends ServiceImpl<GoodsSpecificationMapper, GoodsSpecification> implements IGoodsSpecificationService {
+
+    @Override
+    public List<SpecificationVO> getSpecificationVOList(Long goodsId) {
+        List<GoodsSpecification> specificationList = list(new QueryWrapper<GoodsSpecification>().eq("goods_id", goodsId));
+        Map<String, SpecificationVO> map = new HashMap<>();
+        List<SpecificationVO> specificationVoList = new ArrayList<>();
+        for (GoodsSpecification goodsSpecification : specificationList) {
+            String specification = goodsSpecification.getSpecification();
+            SpecificationVO goodsSpecificationVo = map.get(specification);
+            if (goodsSpecificationVo == null) {
+                goodsSpecificationVo = new SpecificationVO();
+                goodsSpecificationVo.setName(specification);
+                List<GoodsSpecification> valueList = new ArrayList<>();
+                valueList.add(goodsSpecification);
+                goodsSpecificationVo.setValueList(valueList);
+                map.put(specification, goodsSpecificationVo);
+                specificationVoList.add(goodsSpecificationVo);
+            } else {
+                List<GoodsSpecification> valueList = goodsSpecificationVo.getValueList();
+                valueList.add(goodsSpecification);
+            }
+        }
+        return specificationVoList;
+    }
+
+}

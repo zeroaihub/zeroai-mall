@@ -1,0 +1,53 @@
+package com.zeroai.admin.api.controller.shop;
+
+
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.zeroai.common.base.controller.BaseController;
+import com.zeroai.domain.api.trade.entity.Address;
+import com.zeroai.domain.api.trade.service.IAddressService;
+import com.zeroai.util.util.R;
+import lombok.AllArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * 用户收获地址管理
+ *
+ * @since 2020-07-06
+ */
+@RestController
+@AllArgsConstructor
+@RequestMapping("shop/address")
+public class AddressController extends BaseController {
+
+    private IAddressService iAddressService;
+
+    /**
+     * 地址列表
+     *
+     * @param address
+     * @return R
+     */
+    @PreAuthorize("@ss.hasPermi('shop:address:list')")
+    @GetMapping("list")
+    public R<IPage<Address>> list(Address address) {
+        Page<Address> page = getPage();
+        return R.success(iAddressService.listPage(page, address));
+    }
+
+    /**
+     * 根据addressId获取用户地址
+     *
+     * @param addressId 地址id
+     * @return R
+     */
+    @PreAuthorize("@ss.hasPermi('shop:address:info')")
+    @GetMapping("{addressId}")
+    public R<Address> info(@PathVariable Long addressId) {
+        return R.success(iAddressService.getById(addressId));
+    }
+}

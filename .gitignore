@@ -1,0 +1,64 @@
+HELP.md
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**
+!**/src/test/**
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+
+### VS Code ###
+.vscode/
+
+.mvn
+mvnw*
+.gradle
+.m2/
+
+jars/
+front/
+.m2
+
+# Local env files (AI keys, DB passwords) must never be committed.
+.env
+.env.local
+!/.env.example
+
+# Local Spring profile configs may contain server addresses or secrets.
+**/src/main/resources/application-dev.yml
+**/src/main/resources/application-dev.yaml
+**/src/main/resources/application-dev.properties
+
+# Docker 中间件运行时数据（compose 挂载目录，跑起来才产生，绝不能入库）
+/es/data/
+/mysql/data/
+/mysql/log/
+/rabbitmq/data/
+/rabbitmq/log/
+/redis/data/
+/pgvector/data/
+/ollama/data/
+
+# 本地 Agent 工作记录
+.workbuddy/
+.tmp/

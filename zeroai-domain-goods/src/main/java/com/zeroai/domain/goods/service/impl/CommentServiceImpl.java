@@ -1,0 +1,66 @@
+package com.zeroai.domain.goods.service.impl;
+
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
+import com.zeroai.domain.api.goods.entity.Comment;
+import com.zeroai.domain.api.trade.entity.Member;
+import com.zeroai.domain.api.goods.mapper.CommentMapper;
+import com.zeroai.domain.api.goods.service.ICommentService;
+import com.zeroai.domain.api.trade.service.IMemberService;
+import com.zeroai.domain.api.trade.service.IOrderGoodsService;
+import com.zeroai.domain.api.goods.response.CommentTagNumVO;
+import com.zeroai.domain.api.goods.response.CommentVO;
+import com.zeroai.util.exception.BusinessException;
+import lombok.AllArgsConstructor;
+import org.springframework.beans.BeanUtils;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Date;
+
+/**
+ * 评论表 服务实现类
+ *
+ * @since 2020-10-03
+ */
+@Service
+@AllArgsConstructor
+public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> implements ICommentService {
+
+    private CommentMapper commentMapper;
+
+    private IOrderGoodsService iOrderGoodsService;
+
+    private IMemberService iMemberService;
+
+    @Override
+    public IPage<Comment> listPage(Page<Comment> page, Comment comment) {
+        return commentMapper.selectListPage(page, comment);
+    }
+
+    @Override
+    public IPage<CommentVO> selectByTagType(Page<Comment> page, Long goodsId, Integer tagType) {
+        return commentMapper.selectByTagType(page, goodsId, tagType);
+    }
+
+    @Override
+    public CommentTagNumVO selectTagNum(Long goodsId) {
+        return commentMapper.selectTagNum(goodsId);
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    @Override
+    public boolean saveComment(CommentVO commentVO) {
+        Comment comment = new Comment();
+        BeanUtils.copyProperties(commentVO, comment);
+        comment.setCreateTime(new Date());
+        comment.setHasPicture(comment.getPicUrls().length > 0);
+        Member member = iMemberService.getById(commentVO.getUserId());
+        comment.setAvatar(member.getAvatar());
+        if (!save(comment)) {
+            throw new BusinessException("保存评论信息失败");
+        }
+        return iOrderGoodsService.update().set("comment", comment.getId()).eq("id", commentVO.getOrderGoodsId()).update();
+    }
+}

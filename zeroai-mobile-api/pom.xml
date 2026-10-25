@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <parent>
+        <artifactId>zeroai-mall</artifactId>
+        <groupId>com.zeroai</groupId>
+        <version>2.0.0</version>
+    </parent>
+    <modelVersion>4.0.0</modelVersion>
+    <artifactId>zeroai-mobile-api</artifactId>
+    <version>2.0.0</version>
+
+    <properties>
+        <aliyun-docker-namespace>zeroai525</aliyun-docker-namespace>
+        <main-class>com.zeroai.MobileApplication</main-class>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>4.13.2</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-data-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-spring-boot4-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-redis-jackson</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-message-core</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-web</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-amqp</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.projectlombok</groupId>
+                    <artifactId>lombok</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.dromara.sms4j</groupId>
+            <artifactId>sms4j-spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- 支付渠道适配 -->
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-payment-channel</artifactId>
+        </dependency>
+
+        <!-- 业务领域 -->
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-domain-promotion</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-domain-goods</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-domain-cart</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-domain-inventory</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-domain-trade</artifactId>
+        </dependency>
+
+        <!-- AI Agent 通用能力（不依赖业务模块，可复用于其他项目） -->
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-ai-starter</artifactId>
+        </dependency>
+
+        <!-- 验证码 -->
+        <dependency>
+            <groupId>com.github.whvcse</groupId>
+            <artifactId>easy-captcha</artifactId>
+            <version>${easy-captcha.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- 指定该Main Class为全局的唯一入口 -->
+                    <mainClass>${main-class}</mainClass>
+                    <includeSystemScope>true</includeSystemScope>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal><!--可以把依赖的包都打包到生成的Jar包中-->
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+        <finalName>../../jars/zeroai-mobile-api</finalName>
+    </build>
+
+
+</project>

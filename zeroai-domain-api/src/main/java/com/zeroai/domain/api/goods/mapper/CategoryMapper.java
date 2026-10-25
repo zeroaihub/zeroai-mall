@@ -1,0 +1,16 @@
+package com.zeroai.domain.api.goods.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.zeroai.domain.api.goods.entity.Category;
+
+import java.util.List;
+
+/**
+ * 类目表 Mapper 接口
+ *
+ * @since 2020-06-26
+ */
+public interface CategoryMapper extends BaseMapper<Category> {
+
+    List<Category> selectCategoryList(Category category);
+}

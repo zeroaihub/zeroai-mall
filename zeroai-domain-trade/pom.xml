@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <parent>
+        <artifactId>zeroai-mall</artifactId>
+        <groupId>com.zeroai</groupId>
+        <version>2.0.0</version>
+    </parent>
+    <modelVersion>4.0.0</modelVersion>
+    <artifactId>zeroai-domain-trade</artifactId>
+    <version>2.0.0</version>
+
+    <description>
+        交易领域：订单、支付编排、状态机、本地消息、对账。
+        依赖 cart/promotion/inventory/goods 领域能力，承载 OrderSubmitSupport、PaymentCallbackSupport、LocalMessageService 等交易实现。
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-domain-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-domain-cart</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-domain-promotion</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-domain-inventory</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-domain-goods</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-payment-channel</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-data-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-message-core</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-web</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>com.alipay.sdk</groupId>
+            <artifactId>alipay-sdk-java</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.github.binarywang</groupId>
+            <artifactId>weixin-java-pay</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

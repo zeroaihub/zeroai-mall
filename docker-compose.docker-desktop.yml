@@ -1,0 +1,25 @@
+# Docker Desktop（Windows / macOS）专用覆盖文件
+#
+# 背景：原 compose 使用 network_mode: "host"。该模式在 Linux 下端口直接暴露给宿主机，
+#       但 Docker Desktop 运行在虚拟机里，host 模式的端口不会转发到 Windows/macOS 宿主机，
+#       表现为 localhost:3306 / 9200 连接被拒绝（compose 会提示 "Published ports are discarded
+#       when using host network mode"）。
+#
+# 用法：
+#   docker compose -f docker-compose-es7-rabbitmq-redis-mysql.yml \
+#                  -f docker-compose.docker-desktop.yml up -d
+#
+# Linux 原生环境不需要这个文件，行为保持不变。
+services:
+  rabbitmq:
+    network_mode: bridge
+  elasticsearch:
+    network_mode: bridge
+  redis:
+    network_mode: bridge
+  mysql:
+    network_mode: bridge
+  pgvector:
+    network_mode: bridge
+  ollama:
+    network_mode: bridge

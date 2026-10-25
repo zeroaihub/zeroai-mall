@@ -1,0 +1,59 @@
+{
+  "name": "zeroai-admin",
+  "version": "1.0.0",
+  "description": "Zeroai Mall admin console built with Vue 3, Vite 6 and Element Plus",
+  "author": "zeroai525",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 9530",
+    "build:prod": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 9529",
+    "svgo": "svgo -f src/icons/svg --config=src/icons/svgo.yml",
+    "lint": "eslint --ext .js,.vue src",
+    "test:unit": "vitest run tests/unit",
+    "test:ci": "npm run lint && npm run test:unit"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.2",
+    "@tinymce/tinymce-vue": "^6.3.0",
+    "@vue/compiler-sfc": "3.5.34",
+    "@zanmato/vue3-treeselect": "^0.4.4",
+    "axios": "^1.16.1",
+    "crypto-js": "4.2.0",
+    "echarts": "^6.1.0",
+    "element-plus": "^2.14.0",
+    "js-cookie": "^3.0.7",
+    "jsencrypt": "^3.5.4",
+    "lodash": "^4.18.1",
+    "normalize.css": "^8.0.1",
+    "nprogress": "0.2.0",
+    "path-to-regexp": "^8.4.2",
+    "tinymce": "^8.5.1",
+    "vue": "3.5.34",
+    "vue-cropper": "^1.1.4",
+    "vue-router": "^4.6.4",
+    "vuex": "^4.1.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.7",
+    "@vue/test-utils": "^2.4.10",
+    "autoprefixer": "^10.4.21",
+    "eslint": "^8.57.1",
+    "eslint-plugin-vue": "^9.33.0",
+    "fast-glob": "^3.3.3",
+    "jsdom": "^29.1.1",
+    "sass": "^1.100.0",
+    "svgo": "^4.0.1",
+    "vite": "^6.4.2",
+    "vitest": "^4.1.7",
+    "vue-eslint-parser": "^9.4.3"
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions"
+  ],
+  "engines": {
+    "node": ">=20.19.0",
+    "npm": ">=10.0.0"
+  },
+  "license": "MIT"
+}

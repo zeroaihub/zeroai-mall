@@ -1,0 +1,136 @@
+package com.zeroai.admin.api.controller.system;
+
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.zeroai.admin.framework.security.util.SecurityUtils;
+import com.zeroai.common.base.controller.BaseController;
+import com.zeroai.common.core.entity.system.Role;
+import com.zeroai.common.core.service.system.IRoleService;
+import com.zeroai.util.constant.SysConstants;
+import com.zeroai.util.enums.ReturnCodeEnum;
+import com.zeroai.util.util.R;
+import com.zeroai.util.util.excel.ExcelUtil;
+import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Date;
+import java.util.List;
+
+/**
+ * 后台角色管理
+ *
+ * @since 2020-07-21
+ */
+@Slf4j
+@RestController
+@AllArgsConstructor
+@RequestMapping("system/role")
+public class RoleController extends BaseController {
+
+    private IRoleService iRoleService;
+
+    /**
+     * 角色列表
+     *
+     * @param role
+     * @return
+     */
+    @PreAuthorize("@ss.hasPermi('system:role:list')")
+    @GetMapping("/list")
+    public R<IPage<Role>> list(Role role) {
+        Page<Role> page = getPage();
+        return R.success(iRoleService.listPage(page, role));
+    }
+
+    /**
+     * 添加角色
+     *
+     * @param role
+     * @return
+     */
+    @PreAuthorize("@ss.hasPermi('system:role:add')")
+    @PostMapping
+    public R<Boolean> addRole(@Validated @RequestBody Role role) {
+        if (SysConstants.NOT_UNIQUE.equals(iRoleService.checkRoleNameUnique(role))) {
+            return R.error(ReturnCodeEnum.CUSTOM_ERROR.setMsg(String.format("新增角色[%s]失败，角色名称已存在", role.getRoleName())));
+        } else if (SysConstants.NOT_UNIQUE.equals(iRoleService.checkRoleKeyUnique(role))) {
+            return R.error(ReturnCodeEnum.CUSTOM_ERROR.setMsg(String.format("新增角色[%s]失败，角色权限已存在", role.getRoleName())));
+        }
+        role.setCreateBy(SecurityUtils.getUsername());
+        role.setCreateTime(new Date());
+        return R.result(iRoleService.insertRoleAndMenu(role));
+    }
+
+    /**
+     * 修改角色
+     *
+     * @param role
+     * @return
+     */
+    @PreAuthorize("@ss.hasPermi('system:role:update')")
+    @PutMapping
+    public R<Boolean> updateRole(@Validated @RequestBody Role role) {
+        iRoleService.checkRoleAllowed(role);
+        if (SysConstants.NOT_UNIQUE.equals(iRoleService.checkRoleNameUnique(role))) {
+            return R.error(ReturnCodeEnum.CUSTOM_ERROR.setMsg(String.format("更新角色[%s]失败，角色名称已存在", role.getRoleName())));
+        } else if (SysConstants.NOT_UNIQUE.equals(iRoleService.checkRoleKeyUnique(role))) {
+            return R.error(ReturnCodeEnum.CUSTOM_ERROR.setMsg(String.format("更新角色[%s]失败，角色权限已存在", role.getRoleName())));
+        }
+        role.setUpdateBy(SecurityUtils.getUsername());
+        role.setUpdateTime(new Date());
+        return R.result(iRoleService.updateRoleAndMenu(role));
+    }
+
+    /**
+     * 更新角色状态
+     *
+     * @param role
+     * @return
+     */
+    @PreAuthorize("@ss.hasPermi('system:role:update')")
+    @PutMapping("changeStatus")
+    public R<Boolean> changeStatus(@RequestBody Role role) {
+        iRoleService.checkRoleAllowed(role);
+        role.setUpdateBy(SecurityUtils.getUsername());
+        return R.result(iRoleService.updateById(role));
+    }
+
+    /**
+     * 获取角色信息
+     *
+     * @param roleId
+     * @return
+     */
+    @PreAuthorize("@ss.hasPermi('system:role:query')")
+    @GetMapping("/{roleId}")
+    public R<Role> getRole(@PathVariable Long roleId) {
+        return R.success(iRoleService.getById(roleId));
+    }
+
+    /**
+     * 删除角色
+     *
+     * @param roleIds
+     * @return
+     */
+    @PreAuthorize("@ss.hasPermi('system:role:delete')")
+    @DeleteMapping("/{roleIds}")
+    public R<Boolean> deleteRole(@PathVariable List<Long> roleIds) {
+        return R.result(iRoleService.deleteRoleByIds(roleIds));
+    }
+
+    /**
+     * 角色导出
+     *
+     * @param role
+     */
+    @PreAuthorize("@ss.hasPermi('system:role:export')")
+    @GetMapping("/export")
+    public void export(Role role) {
+        List<Role> list = iRoleService.list(role);
+        ExcelUtil.exportExcel(response, list, Role.class, "角色数据.xlsx");
+    }
+}

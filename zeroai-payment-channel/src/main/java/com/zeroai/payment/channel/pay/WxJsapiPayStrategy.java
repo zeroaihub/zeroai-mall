@@ -1,0 +1,84 @@
+package com.zeroai.payment.channel.pay;
+
+import com.alibaba.fastjson.JSON;
+import com.github.binarywang.wxpay.bean.request.WxPayUnifiedOrderV3Request;
+import com.github.binarywang.wxpay.bean.result.WxPayUnifiedOrderV3Result;
+import com.github.binarywang.wxpay.bean.result.enums.TradeTypeEnum;
+import com.github.binarywang.wxpay.service.WxPayService;
+import com.zeroai.domain.api.trade.enums.PayTypeEnum;
+import com.zeroai.common.design.strategy.pay.strategy.PayTypeInterface;
+import com.zeroai.domain.api.trade.request.OrderPayReqVO;
+import com.zeroai.domain.api.trade.response.OrderPayResVO;
+import com.zeroai.domain.api.trade.response.WxJsapiPayResVO;
+import com.zeroai.util.enums.ReturnCodeEnum;
+import com.zeroai.util.exception.BusinessException;
+import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+
+/**
+ * 微信JSAPI支付策略
+ */
+@Slf4j
+@Component
+@AllArgsConstructor
+public class WxJsapiPayStrategy implements PayTypeInterface {
+    private WxPayService wxPayService;
+
+    @Override
+    public OrderPayResVO pay(OrderPayReqVO reqVo) {
+        WxPayUnifiedOrderV3Result.JsapiResult result;
+        try {
+            WxPayUnifiedOrderV3Request orderRequest = new WxPayUnifiedOrderV3Request();
+            WxPayUnifiedOrderV3Request.Payer payer = new WxPayUnifiedOrderV3Request.Payer();
+            payer.setOpenid(reqVo.getOpenId());
+            orderRequest.setOutTradeNo(reqVo.getOrderSn());
+            orderRequest.setPayer(payer);
+            orderRequest.setDescription(reqVo.getGoodsName());
+            WxPayUnifiedOrderV3Request.SceneInfo sceneInfo = new WxPayUnifiedOrderV3Request.SceneInfo();
+            sceneInfo.setPayerClientIp(reqVo.getClientIp());
+            orderRequest.setSceneInfo(sceneInfo);
+            // 元转成分
+            WxPayUnifiedOrderV3Request.Amount amount = new WxPayUnifiedOrderV3Request.Amount();
+            // 元转成分
+            BigDecimal actualPrice = reqVo.getActualPrice();
+            int fee = actualPrice.multiply(new BigDecimal(100)).intValue();
+            amount.setTotal(fee);
+            orderRequest.setAmount(amount);
+            log.info("wxpay request is {}", orderRequest);
+            result = wxPayService.createOrderV3(TradeTypeEnum.JSAPI, orderRequest);
+            log.info("wxpay result is {}", result);
+        } catch (Exception e) {
+            log.error(e.getMessage(), e);
+            throw new BusinessException(ReturnCodeEnum.ORDER_CANNOT_PAY_ERROR);
+        }
+        OrderPayResVO resVO = new OrderPayResVO();
+        resVO.setJsapiResult(buildJsapiPayResult(result));
+        return resVO;
+    }
+
+    /**
+     * 将微信 SDK 返回对象转换为项目内部 VO。
+     * 这样 domain-api 不需要依赖微信 SDK，入口层也不会感知渠道适配实现细节。
+     *
+     * @param result 微信 JSAPI 下单结果
+     * @return 前端调起微信支付所需参数
+     */
+    private WxJsapiPayResVO buildJsapiPayResult(WxPayUnifiedOrderV3Result.JsapiResult result) {
+        WxJsapiPayResVO resVO = new WxJsapiPayResVO();
+        resVO.setAppId(result.getAppId());
+        resVO.setTimeStamp(result.getTimeStamp());
+        resVO.setNonceStr(result.getNonceStr());
+        resVO.setPackageValue(result.getPackageValue());
+        resVO.setSignType(result.getSignType());
+        resVO.setPaySign(result.getPaySign());
+        return resVO;
+    }
+
+    @Override
+    public Integer getType() {
+        return PayTypeEnum.WX_JSAPI.getType();
+    }
+}

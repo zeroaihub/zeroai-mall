@@ -1,0 +1,551 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <modules>
+        <module>zeroai-common</module>
+        <module>zeroai-admin-api</module>
+        <module>zeroai-mobile-api</module>
+        <module>zeroai-data</module>
+        <module>zeroai-message</module>
+        <module>zeroai-util</module>
+        <module>zeroai-payment-channel</module>
+        <module>zeroai-domain-api</module>
+        <module>zeroai-domain-cart</module>
+        <module>zeroai-domain-promotion</module>
+        <module>zeroai-domain-inventory</module>
+        <module>zeroai-domain-goods</module>
+        <module>zeroai-domain-trade</module>
+        <module>zeroai-ai-starter</module>
+    </modules>
+
+    <groupId>com.zeroai</groupId>
+    <artifactId>zeroai-mall</artifactId>
+    <version>2.0.0</version>
+    <packaging>pom</packaging>
+    <name>zeroai</name>
+    <description>zeroai-mall - AI Agent 商城</description>
+
+    <properties>
+        <!-- 基线 JDK 21。产物 target 为 21，运行时必须是 JDK 21+，不能再回退到 17。
+             配套要求：Lombok ≥ 1.18.30（当前 1.18.46）。 -->
+        <java.version>21</java.version>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
+        <maven-surefire-plugin.version>3.5.4</maven-surefire-plugin.version>
+        <!-- Spring Boot 4.1.x：Spring AI 2.0.x 的编译基线。Boot 4 拆分了 autoconfigure 模块、
+             默认 Jackson 3、Spring Security 7，升级时必须三件套（Boot / Spring AI / Jackson）同批动。 -->
+        <spring-boot.version>4.1.2</spring-boot.version>
+        <!-- Spring AI 2.0.2 = 2.0 线最新稳定补丁版（官方要求 Boot 4.x）。
+             2.1.x 目前只有 M1/RC，不上生产。 -->
+        <spring-ai.version>2.0.2</spring-ai.version>
+        <!-- Boot 4 的 BOM 已不再管理 spring-retry，必须自己钉版本 -->
+        <spring-retry.version>2.0.13</spring-retry.version>
+        <!-- 与 spring-ai-openai 2.0.2 传递的 openai-java-core 版本保持一致 -->
+        <openai-java.version>4.80.0</openai-java.version>
+        <mysql.connector.j.version>9.7.0</mysql.connector.j.version>
+        <elasticsearch.version>7.17.29</elasticsearch.version>
+        <mybatis-plus.version>3.5.17</mybatis-plus.version>
+        <druid.version>1.2.28</druid.version>
+        <!-- 与 spring-boot-dependencies 3.5.14 管理版本保持一致。
+             1.18.26 不支持 JDK 21+（JCImport.qualid 改为 JCPath，注解处理器会抛 NoSuchFieldError），
+             且同构建内不能混用两个 lombok 版本。 -->
+        <lombok.version>1.18.46</lombok.version>
+        <commons.io.version>2.22.0</commons.io.version>
+        <commons.collections.version>4.5.0</commons.collections.version>
+        <commons.fileupload.version>1.6.0</commons.fileupload.version>
+        <commons-lang3.version>3.20.0</commons-lang3.version>
+        <fastjson.version>2.0.62</fastjson.version>
+        <easy-captcha.version>1.6.2</easy-captcha.version>
+        <jwt.version>4.3.0</jwt.version>
+        <qiniu.version>7.12.1</qiniu.version>
+        <mail.version>2.0.2</mail.version>
+        <hutool.version>5.8.46</hutool.version>
+        <easyexcel.version>4.0.3</easyexcel.version>
+        <weixin-java-pay.version>4.8.3-20260527.210905</weixin-java-pay.version>
+        <alipay-sdk-java.version>4.40.828.ALL</alipay-sdk-java.version>
+        <sms4j.version>3.3.5</sms4j.version>
+        <sa-token.version>1.46.0</sa-token.version>
+        <shedlock.version>5.16.0</shedlock.version>
+        <protobuf-java.version>4.35.0</protobuf-java.version>
+        <okhttp.version>4.12.0</okhttp.version>
+        <okio.version>3.17.0</okio.version>
+        <dom4j.version>2.2.0</dom4j.version>
+        <bouncycastle.version>1.84</bouncycastle.version>
+        <commons.compress.version>1.28.0</commons.compress.version>
+        <log4j.version>2.26.0</log4j.version>
+        <poi.version>5.5.1</poi.version>
+        <lz4.version>1.8.1</lz4.version>
+        <yawk-lz4.version>1.10.1</yawk-lz4.version>
+        <tomcat.version>10.1.55</tomcat.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Spring AI 依赖版本统一由 BOM 管理，禁止在子模块手写 starter 版本号 -->
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.tomcat.embed</groupId>
+                <artifactId>tomcat-embed-core</artifactId>
+                <version>${tomcat.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.tomcat.embed</groupId>
+                <artifactId>tomcat-embed-el</artifactId>
+                <version>${tomcat.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.tomcat.embed</groupId>
+                <artifactId>tomcat-embed-websocket</artifactId>
+                <version>${tomcat.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework.retry</groupId>
+                <artifactId>spring-retry</artifactId>
+                <version>${spring-retry.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>cn.dev33</groupId>
+                <artifactId>sa-token-spring-boot4-starter</artifactId>
+                <version>${sa-token.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>cn.dev33</groupId>
+                <artifactId>sa-token-redis-jackson</artifactId>
+                <version>${sa-token.version}</version>
+            </dependency>
+            <!-- 不再逐个钉 netty：Boot 4 管理 4.2.x，Lettuce 7 依赖 Netty 4.2 的
+                 io.netty.channel.MultiThreadIoEventLoopGroup，钉 4.1.x 会运行期 NoClassDefFoundError -->
+            <dependency>
+                <groupId>com.google.protobuf</groupId>
+                <artifactId>protobuf-java</artifactId>
+                <version>${protobuf-java.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>cn.hutool</groupId>
+                <artifactId>hutool-core</artifactId>
+                <version>${hutool.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>cn.hutool</groupId>
+                <artifactId>hutool-crypto</artifactId>
+                <version>${hutool.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>cn.hutool</groupId>
+                <artifactId>hutool-json</artifactId>
+                <version>${hutool.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>okhttp</artifactId>
+                <version>${okhttp.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.squareup.okio</groupId>
+                <artifactId>okio</artifactId>
+                <version>${okio.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.dom4j</groupId>
+                <artifactId>dom4j</artifactId>
+                <version>${dom4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcprov-jdk18on</artifactId>
+                <version>${bouncycastle.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-compress</artifactId>
+                <version>${commons.compress.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-api</artifactId>
+                <version>${log4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.logging.log4j</groupId>
+                <artifactId>log4j-core</artifactId>
+                <version>${log4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.poi</groupId>
+                <artifactId>poi</artifactId>
+                <version>${poi.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.poi</groupId>
+                <artifactId>poi-ooxml</artifactId>
+                <version>${poi.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.poi</groupId>
+                <artifactId>poi-ooxml-lite</artifactId>
+                <version>${poi.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.lz4</groupId>
+                <artifactId>lz4-java</artifactId>
+                <version>${lz4.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>at.yawk.lz4</groupId>
+                <artifactId>lz4-java</artifactId>
+                <version>${yawk-lz4.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-aspectj</artifactId>
+                <version>${spring-boot.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-configuration-processor</artifactId>
+                <version>${spring-boot.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-data-redis</artifactId>
+                <version>${spring-boot.version}</version>
+            </dependency>
+            <!-- lettuce-core 不再钉版本：Boot 4 管理 7.5.2，Spring Data Redis 4.x 依赖
+                 Lettuce 7 的 io.lettuce.core.DriverInfo，钉 6.8.2 会运行期 NoClassDefFoundError -->
+
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-security</artifactId>
+                <version>${spring-boot.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-web</artifactId>
+                <version>${spring-boot.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-amqp</artifactId>
+                <version>${spring-boot.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-test</artifactId>
+                <version>${spring-boot.version}</version>
+                <scope>test</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>com.baomidou</groupId>
+                <artifactId>mybatis-plus-spring-boot4-starter</artifactId>
+                <version>${mybatis-plus.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.baomidou</groupId>
+                <artifactId>mybatis-plus-jsqlparser</artifactId>
+                <version>${mybatis-plus.version}</version>
+            </dependency>
+
+            <!-- 阿里数据库连接池 -->
+            <dependency>
+                <groupId>com.alibaba</groupId>
+                <artifactId>druid-spring-boot-4-starter</artifactId>
+                <version>${druid.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.mysql</groupId>
+                <artifactId>mysql-connector-j</artifactId>
+                <version>${mysql.connector.j.version}</version>
+                <scope>runtime</scope>
+            </dependency>
+
+            <!-- Apache 工具组件 -->
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-lang3</artifactId>
+                <version>${commons-lang3.version}</version>
+            </dependency>
+
+            <!-- Apache 集合组件 -->
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-collections4</artifactId>
+                <version>${commons.collections.version}</version>
+            </dependency>
+
+            <!-- 验证码 -->
+            <dependency>
+                <groupId>com.github.whvcse</groupId>
+                <artifactId>easy-captcha</artifactId>
+                <version>${easy-captcha.version}</version>
+            </dependency>
+
+            <!-- 文件上传工具 -->
+            <dependency>
+                <groupId>commons-fileupload</groupId>
+                <artifactId>commons-fileupload</artifactId>
+                <version>${commons.fileupload.version}</version>
+            </dependency>
+
+            <!-- JWT -->
+            <dependency>
+                <groupId>com.auth0</groupId>
+                <artifactId>java-jwt</artifactId>
+                <version>${jwt.version}</version>
+            </dependency>
+
+            <!-- Fastjson -->
+            <dependency>
+                <groupId>com.alibaba</groupId>
+                <artifactId>fastjson</artifactId>
+                <version>${fastjson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.alibaba.fastjson2</groupId>
+                <artifactId>fastjson2</artifactId>
+                <version>${fastjson.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.sun.mail</groupId>
+                <artifactId>jakarta.mail</artifactId>
+                <version>${mail.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.alibaba</groupId>
+                <artifactId>easyexcel</artifactId>
+                <version>${easyexcel.version}</version>
+            </dependency>
+
+            <!-- 微信支付 -->
+            <dependency>
+                <groupId>com.github.binarywang</groupId>
+                <artifactId>weixin-java-pay</artifactId>
+                <version>${weixin-java-pay.version}</version>
+            </dependency>
+
+            <!-- 支付宝依赖 -->
+            <dependency>
+                <groupId>com.alipay.sdk</groupId>
+                <artifactId>alipay-sdk-java</artifactId>
+                <version>${alipay-sdk-java.version}</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.bouncycastle</groupId>
+                        <artifactId>bcprov-jdk15on</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>dom4j</groupId>
+                        <artifactId>dom4j</artifactId>
+                    </exclusion>
+                    <exclusion>
+                        <groupId>com.squareup.okhttp3</groupId>
+                        <artifactId>okhttp</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+
+            <dependency>
+                <groupId>org.elasticsearch</groupId>
+                <artifactId>elasticsearch</artifactId>
+                <version>${elasticsearch.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.elasticsearch.client</groupId>
+                <artifactId>elasticsearch-rest-client</artifactId>
+                <version>${elasticsearch.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.elasticsearch.client</groupId>
+                <artifactId>elasticsearch-rest-high-level-client</artifactId>
+                <version>${elasticsearch.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.dromara.sms4j</groupId>
+                <artifactId>sms4j-spring-boot-starter</artifactId>
+                <version>${sms4j.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.javacrumbs.shedlock</groupId>
+                <artifactId>shedlock-spring</artifactId>
+                <version>${shedlock.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.javacrumbs.shedlock</groupId>
+                <artifactId>shedlock-provider-redis-spring</artifactId>
+                <version>${shedlock.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zeroai</groupId>
+                <artifactId>zeroai-data-redis</artifactId>
+                <version>${version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.zeroai</groupId>
+                <artifactId>zeroai-data-elastic</artifactId>
+                <version>${version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zeroai</groupId>
+                <artifactId>zeroai-common</artifactId>
+                <version>${version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zeroai</groupId>
+                <artifactId>zeroai-message-core</artifactId>
+                <version>${version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zeroai</groupId>
+                <artifactId>zeroai-util</artifactId>
+                <version>${version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zeroai</groupId>
+                <artifactId>zeroai-payment-channel</artifactId>
+                <version>${version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zeroai</groupId>
+                <artifactId>zeroai-domain-api</artifactId>
+                <version>${version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zeroai</groupId>
+                <artifactId>zeroai-domain-cart</artifactId>
+                <version>${version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zeroai</groupId>
+                <artifactId>zeroai-domain-promotion</artifactId>
+                <version>${version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zeroai</groupId>
+                <artifactId>zeroai-domain-inventory</artifactId>
+                <version>${version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zeroai</groupId>
+                <artifactId>zeroai-domain-goods</artifactId>
+                <version>${version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zeroai</groupId>
+                <artifactId>zeroai-domain-trade</artifactId>
+                <version>${version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zeroai</groupId>
+                <artifactId>zeroai-ai-starter</artifactId>
+                <version>${version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <repositories>
+        <repository>
+            <id>public</id>
+            <name>aliyun nexus</name>
+            <url>https://maven.aliyun.com/repository/public</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+        </repository>
+    </repositories>
+
+    <pluginRepositories>
+        <pluginRepository>
+            <id>public</id>
+            <name>aliyun nexus</name>
+            <url>https://maven.aliyun.com/repository/public</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </pluginRepository>
+        <pluginRepository>
+            <id>spring-snapshots</id>
+            <url>https://repo.spring.io/snapshot</url>
+        </pluginRepository>
+        <pluginRepository>
+            <id>spring-milestones</id>
+            <url>https://repo.spring.io/milestone</url>
+        </pluginRepository>
+    </pluginRepositories>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <!-- 本项目 import spring-boot-dependencies 而非继承 spring-boot-starter-parent，
+                     插件版本不受 BOM 管理。不钉版本时 Maven 会从仓库元数据取最新，
+                     曾解析到 4.2.0-M2（Boot 4 里程碑）导致打包异常，必须显式锁定。 -->
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${spring-boot.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${maven-compiler-plugin.version}</version>
+                <configuration>
+                    <encoding>${project.build.sourceEncoding}</encoding>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                    <compilerArgs>
+                        <compilerArg>-parameters</compilerArg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven-surefire-plugin.version}</version>
+                <configuration>
+                    <argLine>-Djdk.net.URLClassPath.disableClassPathURLCheck=true</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

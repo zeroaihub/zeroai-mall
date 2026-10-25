@@ -1,0 +1,140 @@
+package com.zeroai.common.core.service.system.impl;
+
+import com.alibaba.excel.read.listener.PageReadListener;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
+import com.zeroai.common.core.entity.system.Role;
+import com.zeroai.common.core.entity.system.User;
+import com.zeroai.common.core.entity.system.UserRole;
+import com.zeroai.common.core.mapper.system.RoleMapper;
+import com.zeroai.common.core.mapper.system.UserMapper;
+import com.zeroai.common.core.service.system.IUserRoleService;
+import com.zeroai.common.core.service.system.IUserService;
+import com.zeroai.util.constant.SysConstants;
+import com.zeroai.util.exception.BusinessException;
+import com.zeroai.util.util.excel.ExcelUtil;
+import lombok.AllArgsConstructor;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Service
+@AllArgsConstructor
+public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IUserService {
+
+    private UserMapper userMapper;
+
+    private RoleMapper roleMapper;
+
+    private IUserRoleService iUserRoleService;
+
+    @Override
+    public IPage<User> listPage(Page<User> page, User user) {
+        return userMapper.selectUserListPage(page, user);
+    }
+
+    @Override
+    public void checkUserAllowed(User user) {
+        if (user.isAdmin()) {
+            throw new BusinessException("不允许操作管理员用户");
+        }
+    }
+
+    @Override
+    public String checkUserNameUnique(String userName) {
+        long count = count(Wrappers.lambdaQuery(User.class).eq(User::getUserName, userName));
+        if (count > 0) {
+            return SysConstants.NOT_UNIQUE;
+        }
+        return SysConstants.UNIQUE;
+    }
+
+    @Override
+    public String checkPhoneUnique(User user) {
+        long userId = Objects.nonNull(user.getUserId()) ? user.getUserId() : 0;
+        User info = getOne(new QueryWrapper<User>().eq("phone", user.getPhone()));
+        if (info != null && info.getUserId() != userId) {
+            return SysConstants.NOT_UNIQUE;
+        }
+        return SysConstants.UNIQUE;
+    }
+
+    @Override
+    public String checkEmailUnique(User user) {
+        long userId = Objects.nonNull(user.getUserId()) ? user.getUserId() : 0;
+        User info = getOne(new QueryWrapper<User>().eq("email", user.getEmail()));
+        if (info != null && info.getUserId() != userId) {
+            return SysConstants.NOT_UNIQUE;
+        }
+        return SysConstants.UNIQUE;
+    }
+
+    @Override
+    public boolean insertUserAndRole(User user) {
+        save(user);
+        List<UserRole> userRoles = Arrays.stream(user.getRoleIds()).map(item -> new UserRole(user.getUserId(), item)).collect(Collectors.toList());
+        return userRoles.isEmpty() || iUserRoleService.saveBatch(userRoles);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean updateUserAndRole(User user) {
+        updateById(user);
+        iUserRoleService.remove(new QueryWrapper<UserRole>().eq("user_id", user.getUserId()));
+        List<UserRole> userRoles = Arrays.stream(user.getRoleIds()).map(item -> new UserRole(user.getUserId(), item)).collect(Collectors.toList());
+        return userRoles.isEmpty() || iUserRoleService.saveBatch(userRoles);
+    }
+
+    @Override
+    public List<User> list(User user) {
+        return userMapper.selectUserList(user);
+    }
+
+    @Override
+    public String selectUserRoleGroup(String userName) {
+        List<Role> list = roleMapper.selectRolesByUserName(userName);
+        StringBuilder idsStr = new StringBuilder();
+        for (Role role : list) {
+            idsStr.append(role.getRoleName()).append(",");
+        }
+        if (StringUtils.isNotEmpty(idsStr.toString())) {
+            return idsStr.substring(0, idsStr.length() - 1);
+        }
+        return idsStr.toString();
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    @Override
+    public void importUser(MultipartFile file, String username, String password) {
+        try (InputStream inputStream = file.getInputStream()) {
+            List<User> list = new ArrayList<>();
+            ExcelUtil.readExcel(inputStream, User.class, new PageReadListener<User>(dataList -> {
+                for (User user : dataList) {
+                    if (SysConstants.NOT_UNIQUE.equals(this.checkUserNameUnique(user.getUserName()))) {
+                        throw new BusinessException(String.format("导入用户[%s]失败，登录账号已存在", user.getUserName()));
+                    } else if (SysConstants.NOT_UNIQUE.equals(this.checkPhoneUnique(user))) {
+                        throw new BusinessException(String.format("导入用户[%s]失败，手机号码已存在", user.getUserName()));
+                    } else if (SysConstants.NOT_UNIQUE.equals(this.checkEmailUnique(user))) {
+                        throw new BusinessException(String.format("导入用户[%s]失败，邮箱账号已存在", user.getUserName()));
+                    }
+                    user.setDeptId(101L);
+                    user.setCreateBy(username);
+                    user.setCreateTime(new Date());
+                    user.setPassword(password);
+                }
+                this.saveBatch(list);
+            }));
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+}

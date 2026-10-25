@@ -1,0 +1,7 @@
+# Sa-Token 1.46 起，Redis 中的 Session 采用 JSON 多态反序列化，仅允许白名单内的类型。
+# 业务实体默认不在白名单内，`LoginUserDetail#member` 反序列化会抛
+# 「无法反序列化的类型：com.zeroai.domain.api.trade.entity.Member」。
+#
+# LoginUserDetail 自身已通过 implements SaJsonType 登记；
+# 这里补登跨模块的领域实体（不能给 domain-api 反向引入 sa-token 依赖）。
+com.zeroai.domain.api.trade.entity.Member

@@ -1,0 +1,61 @@
+package com.zeroai.domain.api.trade.service;
+
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.spring.service.IService;
+import com.zeroai.domain.api.trade.entity.Order;
+import com.zeroai.domain.api.trade.exception.PaymentChannelException;
+import com.zeroai.domain.api.trade.request.OrderManagerReqVO;
+import com.zeroai.domain.api.trade.request.OrderRefundReqVO;
+import com.zeroai.domain.api.trade.request.ShipRequestVO;
+import com.zeroai.domain.api.trade.response.OrderDetailResVO;
+import com.zeroai.domain.api.trade.response.OrderManagerResVO;
+
+import java.io.UnsupportedEncodingException;
+
+/**
+ * 类目表 服务类
+ *
+ * @since 2020-06-26
+ */
+public interface IOrderService extends IService<Order> {
+
+    /**
+     * 获取订单列表
+     *
+     * @param page  分页对象
+     * @param order 订单对象
+     * @return r
+     */
+    IPage<OrderManagerResVO> listPage(IPage<Order> page, OrderManagerReqVO order);
+
+    /**
+     * 订单退款
+     * <p>
+     * 1. 检测当前订单是否能够退款;
+     * 2. 微信退款操作;
+     * 3. 设置订单退款确认状态；
+     * 4. 订单商品库存回库。
+     * <p>
+     *
+     * @param reqVO
+     */
+    void refund(OrderRefundReqVO reqVO) throws UnsupportedEncodingException, PaymentChannelException;
+
+    /**
+     * 发货
+     * 1. 检测当前订单是否能够发货
+     * 2. 设置订单发货状态
+     *
+     * @param shipVO 订单信息，{ orderId：xxx, shipSn: xxx, shipChannel: xxx }
+     * @return r
+     */
+    void ship(ShipRequestVO shipVO) throws UnsupportedEncodingException;
+
+    /**
+     * 获取订单详情（包含订单信息，订单商品信息，用户信息）
+     *
+     * @param orderId
+     * @return OrderDetailResVO
+     */
+    OrderDetailResVO detail(Long orderId);
+}

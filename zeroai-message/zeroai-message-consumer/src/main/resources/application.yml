@@ -1,0 +1,14 @@
+server:
+  port: 85
+  shutdown: graceful # 优雅关机
+spring:
+  application:
+    name: zeroai-message-consumer
+  profiles:
+      active: dev
+# 日志配置
+logging:
+  level:
+    com.zeroai: info
+    org.springframework: info
+

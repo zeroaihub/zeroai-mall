@@ -1,0 +1,29 @@
+package com.zeroai.data.redis.constant;
+
+/**
+ * 缓存常量
+ */
+public class CacheConstants {
+
+    /**
+     * 缓存前缀, 统一项目缓存前缀
+     */
+    public static final String CACHE_PREFIX = "zeroai:";
+
+    /**
+     * 登录用户 redis key
+     */
+    public static final String LOGIN_TOKEN_KEY = CACHE_PREFIX + "login_tokens:";
+
+    /**
+     * 用户会话索引 key 前缀，key 结构：zeroai:user_login_tokens:{userId}
+     */
+    public static final String USER_LOGIN_TOKEN_KEY_PREFIX = CACHE_PREFIX + "user_login_tokens:";
+
+
+    public static final String SHOP_HOME_INDEX_HASH = CACHE_PREFIX + "shop_home_index_hash";
+    public static final String SHOP_HOME_INDEX_HASH_EXPIRATION_FIELD = "expire_time";
+
+    public static final String ORDER_SN_INCR_KEY = CACHE_PREFIX + "order_sn_incr_key";
+
+}

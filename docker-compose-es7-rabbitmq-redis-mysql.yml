@@ -1,0 +1,91 @@
+version: '3'
+services:
+  # RabbitMQ，启动报错时执行chmod 777 -R rabbitmq/
+  rabbitmq:
+    image: rabbitmq:3.12.7-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    container_name: rabbitmq
+    volumes:
+      - ./rabbitmq/plugins/rabbitmq_delayed_message_exchange-3.12.0.ez:/plugins/rabbitmq_delayed_message_exchange-3.12.0.ez
+      - ./rabbitmq/plugins/enabled_plugins:/etc/rabbitmq/enabled_plugins
+      - ./rabbitmq/data:/var/lib/rabbitmq
+      - ./rabbitmq/log:/var/lib/rabbitmq
+    environment:
+      # rabbitmq的初始用户名
+      RABBITMQ_DEFAULT_USER: guest
+      # rabbitmq的初始密码
+      RABBITMQ_DEFAULT_PASS: guest
+    network_mode: "host"
+  # Elasticsearch服务，启动报错时执行chmod 777 -R es/
+  elasticsearch:
+    image: elasticsearch:7.14.0
+    ports:
+      - "9200:9200"
+    container_name: elasticsearch
+    volumes:
+      - ./es/data:/usr/share/elasticsearch/data
+      - ./es/plugins:/usr/share/elasticsearch/plugins
+      - ./es/config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
+    environment:
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      # 列表写法下引号会进值（真实密码变成 "123456"），与 application-dev.yml 的
+      # es.config.password=123456 对不上 → 401。这里必须不写引号。
+      - ELASTIC_PASSWORD=123456
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    network_mode: "host"
+  redis:
+    container_name: redis
+    image: redis:6.2.7
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis/redis.conf:/etc/redis/redis.conf
+      - ./redis/data:/data
+    command: redis-server /etc/redis/redis.conf
+    network_mode: "host"
+  # MySQL服务
+  mysql:
+    container_name: mysql
+    image: mysql:8.0.33
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: '@@123456Java'
+      MYSQL_ALLOW_EMPTY_PASSWORD: 'no'
+      MYSQL_DATABASE: 'zeroai_mall'
+    volumes:
+      - ./mysql/data:/var/lib/mysql
+      - ./mysql/log:/var/log/mysql
+      - ./db-init:/docker-entrypoint-initdb.d
+      - ./mysql/conf/my.cnf:/etc/mysql/conf.d/my.cnf
+    command: mysqld --lower_case_table_names=1 --slow_query_log=1 --max_connections=1000 --default-authentication-plugin=mysql_native_password
+    network_mode: "host"
+  # ===== 以下为 AI Agent 接入新增，P6 知识库阶段才需要启动 =====
+  # 向量库：仅用于售后/运费/FAQ 等知识库问答；商品搜索仍走 Elasticsearch，勿混用
+  pgvector:
+    container_name: pgvector
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${PGVECTOR_DB:-zeroai_ai}
+      POSTGRES_USER: ${PGVECTOR_USER:-zeroai}
+      POSTGRES_PASSWORD: ${PGVECTOR_PASSWORD:-zeroai_ai_pwd}
+      TZ: Asia/Shanghai
+    volumes:
+      - ./pgvector/data:/var/lib/postgresql/data
+    network_mode: "host"
+  # 本地模型兜底通道：仅在需要离线演示时启用，默认不启动（避免所有人被迫拉取模型）
+  # 启动方式：docker compose -f docker-compose-es7-rabbitmq-redis-mysql.yml --profile ollama up -d ollama
+  ollama:
+    container_name: ollama
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama/data:/root/.ollama
+    network_mode: "host"
