@@ -81,6 +81,16 @@
         <lz4.version>1.8.1</lz4.version>
         <yawk-lz4.version>1.10.1</yawk-lz4.version>
         <tomcat.version>10.1.55</tomcat.version>
+        <!-- AgentScope Java。Maven Central 的 <latest>/<release> 指向 2.1.0-BETA1，
+            按 release 取会误装 beta，必须写死 2.0.4。升级前先跑 docs/agent/ADR-001 的兼容性检查。 -->
+        <agentscope.version>2.0.4</agentscope.version>
+        <!-- victools 版本仲裁：Spring AI 2.0.2 依赖 5.0.0，AgentScope 2.0.4 依赖 4.38.0，
+             两个都是 compile 作用域且大版本不兼容（5.x 移除了 4.x 的 generateSchema 重载，
+             运行时抛 NoSuchMethodError）。此处统一钉 4.38.0：
+             AgentScope 的工具 schema 生成是活跃路径，必须可用；
+             Spring AI 仅在结构化输出时用 victools，本项目 AI 通道不使用该特性。
+             若将来要启用 Spring AI 的结构化输出，必须回头重新评估本仲裁，见 ADR-001。 -->
+        <victools.version>4.38.0</victools.version>
     </properties>
 
     <dependencies>
@@ -108,6 +118,7 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+
             <dependency>
                 <groupId>org.apache.tomcat.embed</groupId>
                 <artifactId>tomcat-embed-core</artifactId>
@@ -548,4 +559,15 @@
             </plugin>
         </plugins>
     </build>
+    <!-- 压测端单独挂在 sim profile 下：
+         默认 mvn clean package / mvn test 不会构建它，避免把压测工具打进业务产物或拖慢 CI。
+         构建方式：mvn -Psim -pl zeroai-simulator -am clean package -->
+    <profiles>
+        <profile>
+            <id>sim</id>
+            <modules>
+                <module>zeroai-simulator</module>
+            </modules>
+        </profile>
+    </profiles>
 </project>

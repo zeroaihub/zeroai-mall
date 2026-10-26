@@ -1,0 +1,10 @@
+step,total,ok,fail,success_rate,p50_ms,p95_ms,p99_ms,max_ms,mean_ms,errors
+cart.list,111,111,0,1.0000,16,22,24,24,15.06,"-"
+cart.add,111,111,0,1.0000,25,34,37,39,24.04,"-"
+search.result,111,111,0,1.0000,19,27,53,62,18.66,"-"
+goods.detail,111,111,0,1.0000,4,12,16,24,5.02,"-"
+cart.delete,92,81,11,0.8804,13,18,27,27,12.62,"NET_ERROR=10 BIZ_500=1"
+order.submit,80,80,0,1.0000,22,33,36,36,22.25,"-"
+order.searchResult,62,0,62,0.0000,20001,20001,20001,58880,32329.48,"ORDER_NOT_READY=62"
+chain.abort,61,0,61,0.0000,0,0,0,0,0.00,"chain.order_not_persisted=61"
+chain.abandon_cart,31,31,0,1.0000,0,0,0,0,0.00,"-"

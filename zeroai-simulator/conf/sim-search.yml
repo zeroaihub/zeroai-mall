@@ -1,0 +1,58 @@
+# 纯搜索压测配置：无状态读链路（搜索 → 详情 → 购物车列表）
+#
+# 用途：找「读链路」的吞吐上限。它不写库、不下单，是整条链路里最容易打到高 QPS 的部分，
+# 适合在压「下单」之前先摸清 ES / 缓存这一层的底。
+#
+# 注意：搜索走 ES，命中范围是 fuzzy 的，keyword 用 "SIM-仿真" 只能保证优先命中仿真商品，
+# 不保证只命中它们。这是 ES 分析器的行为，不是压测端的问题；要严格隔离只能用 goodsIds 下单。
+sim:
+  baseUrl: "http://127.0.0.1:82"
+  adminBaseUrl: "http://127.0.0.1:81"
+  processIndex: 0
+  processCount: 1
+
+  account:
+    poolFile: "sim-data/accounts-local.jsonl"
+    size: 20
+    mobilePrefix: "1990000"
+    mobileStart: 1
+    adminToken: ""
+
+  workload:
+    scenario: search_only
+    keywords: ["SIM-仿真", "仿真测试", "SIM", "手机"]
+    goodsIds: [9900001, 9900002]
+    shipAndConfirm: false
+    thinkTime: { minMs: 50, maxMs: 300, medianMs: 120 }
+    orderPoll:
+      maxAttempts: 30
+      intervalMs: 500
+    seckill:
+      activityId: 0
+      activitySkuId: 0
+      burstUsers: 0
+
+  load:
+    mode: open_loop
+    tickMs: 10
+    workers: 100
+    stages:
+      - { duration: 15, targetQps: 20 }
+      - { duration: 15, targetQps: 60 }
+    burstAtEpochMs: 0
+
+  http:
+    connectTimeoutMs: 1000
+    readTimeoutMs: 5000
+    maxIdleConnections: 200
+
+  report:
+    intervalSec: 5
+    outDir: "sim-data"
+
+  verify:
+    enabled: false
+    jdbcUrl: "jdbc:mysql://127.0.0.1:3307/zeroai_mall?useSSL=false&serverTimezone=Asia/Shanghai"
+    jdbcUser: "root"
+    jdbcPassword: "@@123456Java"
+    baselineFile: "sim-data/baseline-search.json"

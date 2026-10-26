@@ -1,0 +1,86 @@
+# zeroai-simulator 本地配置
+#
+# 三个维度互相独立，调压力时只动 load.stages，不要跟着改 workers：
+#   账号数  = 有多少个不同用户在操作（真实感、数据分布）
+#   线程数  = 同时在途的请求上限（能不能把目标 QPS 打满）
+#   λ(阶段) = QPS 硬约束
+#
+# 本文件对应 scripts/dev/seed-sim-dataset.sh 造出来的 SIM 数据集。
+# 换环境时只改 baseUrl / adminToken / verify.jdbcPassword 三处即可。
+sim:
+  baseUrl: "http://127.0.0.1:82"
+  adminBaseUrl: "http://127.0.0.1:81"
+
+  # 多机压测时改这两个，λ 会按 processCount 自动分摊
+  processIndex: 0
+  processCount: 1
+
+  account:
+    poolFile: "sim-data/accounts-local.jsonl"
+    size: 500                 # 目标账号数，warmup 会创建到这么多
+    mobilePrefix: "1990000"   # 专用号段，压完可按号段精确清理
+    mobileStart: 1
+    # 后台登录需要图形验证码。用 bash scripts/dev/get-admin-token.sh 现取一个填这里
+    # （本地 dev 环境专用：验证码明文存 Redis，可直接读出回填）。
+    # 只有 workload.shipAndConfirm=true 时才需要它。
+    adminToken: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3OTI5OTQyNTUsImlhdCI6MTc5Mjk5MjQ1NSwibG9naW5fdXNlcl9rZXkiOiJjOTdkYWFmZTJmZmM0MTdiYjIwN2Q5NDg3ODQ5ZWZiMiJ9.uHFK1rzdk-J7NZMooZnavr7g4WvrSWgTqO4BJZW0iaw"
+
+  workload:
+    scenario: normal_purchase   # search_only | normal_purchase | seckill
+    keywords:
+      - "SIM-仿真"              # 造数脚本插入的仿真商品名
+      - "仿真测试"
+      - "SIM"
+    # 非空时落单目标固定为这些仿真商品：搜索接口照常请求（QPS 口径不变），
+    # 但不会因为随机命中真实商品而污染 sales / 库存。
+    goodsIds: [9900001, 9900002]
+    shipAndConfirm: true       # 是否继续走后台发货 + 确认收货（需要上面填 adminToken）
+    # 漏斗分支比例。压测用真实分布；验证链路是否走得通时设 0（见 conf/sim-smoke.yml）
+    abandonAfterCartRate: 0.30  # 加购后放弃
+    leaveUnpaidRate: 0.15       # 下单后不支付（覆盖超时关单 + 库存回补）
+    thinkTime:
+      minMs: 200
+      maxMs: 5000
+      medianMs: 800
+    # 异步下单的轮询窗口：30 × 500ms = 15 秒。
+    # 不能设成「几百毫秒」——本地 local_message 补偿表是定时扫描转发的，
+    # 实测端到端建单要 3~4 秒，窗口太短会把系统慢误判成系统错。
+    orderPoll:
+      maxAttempts: 30
+      intervalMs: 500
+    seckill:
+      activityId: 990001        # SIM-仿真秒杀活动
+      activitySkuId: 9900001    # 填了就直接用，省一次详情查询
+      # 注意：服务端 SKU 级令牌桶是 capacity=200 / refill=200 每秒（SeckillRateLimiterSupport）。
+      # 齐射用户数超过 200 时，超出部分必然被限流拒绝，这是服务端设计如此，不是压测端的 bug。
+      # 要测「超大齐射下的限流保护」就调大；要测「全部抢到」就压到 200 以内。
+      burstUsers: 100
+
+  load:
+    mode: open_loop             # open_loop 开环阶梯 | burst 秒杀齐射
+    tickMs: 10
+    workers: 200                # 在途上限，经验值 ≈ 目标QPS × 链路RT秒数 × 1.5
+    # 阶梯：只压到「本地单消费者能跟上」的量级。
+    # 实测本地 RabbitMQ 订单队列只有一个 listener（prefetch=1，手动 ack + 失败重试阻塞），
+    # 下单 QPS 超过 ~10 就会积压，此时看到的「下单未落库」是消费端吞吐不足，不是下单接口的问题。
+    stages:
+      - { duration: 15,  targetQps: 5 }     # 预热
+      - { duration: 30,  targetQps: 15 }
+    # 齐射时刻（epoch 毫秒），mode=burst 时使用；0 表示马上开始
+    burstAtEpochMs: 0
+
+  http:
+    connectTimeoutMs: 1000
+    readTimeoutMs: 5000
+    maxIdleConnections: 400
+
+  report:
+    intervalSec: 5
+    outDir: "sim-data"
+
+  verify:
+    enabled: true
+    jdbcUrl: "jdbc:mysql://127.0.0.1:3307/zeroai_mall?useSSL=false&serverTimezone=Asia/Shanghai"
+    jdbcUser: "root"
+    jdbcPassword: "@@123456Java"
+    baselineFile: "sim-data/baseline.json"

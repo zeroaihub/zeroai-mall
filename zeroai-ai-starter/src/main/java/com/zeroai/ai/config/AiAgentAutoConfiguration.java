@@ -1,7 +1,10 @@
 package com.zeroai.ai.config;
 
 import com.openai.client.OpenAIClient;
+import com.openai.client.OpenAIClientAsync;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
+import com.openai.client.okhttp.OpenAIOkHttpClientAsync;
+import com.zeroai.ai.agent.AgentChatHandler;
 import com.zeroai.ai.prompt.PromptLoader;
 import com.zeroai.ai.web.AiChatController;
 import com.zeroai.ai.web.AiUserContext;
@@ -9,6 +12,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -74,16 +78,18 @@ public class AiAgentAutoConfiguration {
     /**
      * 注册通用流式对话控制器。
      *
-     * @param aiChatClient ChatClient
-     * @param properties   AI 配置
-     * @param userContext  用户上下文
+     * @param aiChatClient         ChatClient
+     * @param properties           AI 配置
+     * @param userContext          用户上下文
+     * @param agentHandlerProvider Agent 通道处理器提供者；未启用 agentscope 时为空
      * @return 控制器实例
      */
     @Bean
     @ConditionalOnMissingBean
     public AiChatController aiChatController(ChatClient aiChatClient, AiAgentProperties properties,
-                                             AiUserContext userContext) {
-        return new AiChatController(aiChatClient, properties, userContext);
+                                             AiUserContext userContext,
+                                             ObjectProvider<AgentChatHandler> agentHandlerProvider) {
+        return new AiChatController(aiChatClient, properties, userContext, agentHandlerProvider);
     }
 
     private ChatModel buildOpenAiChatModel(AiAgentProperties properties) {
@@ -96,6 +102,14 @@ public class AiAgentAutoConfiguration {
                 .baseUrl(properties.getBaseUrl())
                 .apiKey(properties.getApiKey())
                 .build();
+        // 必须同时注入异步客户端：SDK 的 OpenAiChatModel.Builder 在只给同步客户端时，
+        // 仍会走 OpenAiSetup 自行构造 async 客户端，并因拿不到 apiKey 抛
+        // IllegalStateException("At least one credential source must be specified")。
+        // 该缺陷此前未被发现，是因为 AI 开关一直关闭、这条装配路径从未被执行过。
+        OpenAIClientAsync openAiClientAsync = OpenAIOkHttpClientAsync.builder()
+                .baseUrl(properties.getBaseUrl())
+                .apiKey(properties.getApiKey())
+                .build();
         OpenAiChatOptions options = OpenAiChatOptions.builder()
                 .model(properties.getModel())
                 .temperature(properties.getTemperature())
@@ -103,6 +117,7 @@ public class AiAgentAutoConfiguration {
                 .build();
         return OpenAiChatModel.builder()
                 .openAiClient(openAiClient)
+                .openAiClientAsync(openAiClientAsync)
                 .options(options)
                 .build();
     }

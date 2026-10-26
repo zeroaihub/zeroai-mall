@@ -1,0 +1,61 @@
+# 秒杀链路验证 / 压测配置
+#
+# 秒杀和服务端限流的关系（必须先看这段，否则会误判）：
+#   SeckillRateLimiterSupport 对每个 SKU 有一个令牌桶，capacity=200、refill=200/秒，
+#   外加每用户 capacity=3 的桶。所以：
+#     - burstUsers ≤ 200 时，理论上能全部通过限流进入库存 Lua；
+#     - burstUsers > 200 时，超出部分必然被拒（返回「请求过于频繁」），这是设计内的保护，
+#       报表里会记成 chain.abort / BIZ_*，不代表系统出错。
+#
+# 秒杀还要求 Redis 库存已预热（zeroai:seckill:stock:{skuId}=裸整数），
+# 否则 submit 直接返回「秒杀库存未预热」(-2)。造数脚本 scripts/dev/seed-sim-dataset.sh 已处理。
+sim:
+  baseUrl: "http://127.0.0.1:82"
+  adminBaseUrl: "http://127.0.0.1:81"
+  processIndex: 0
+  processCount: 1
+
+  account:
+    poolFile: "sim-data/accounts-local.jsonl"
+    size: 20
+    mobilePrefix: "1990000"
+    mobileStart: 1
+    adminToken: ""              # 需要发货→收货时再填（bash scripts/dev/get-admin-token.sh）
+
+  workload:
+    scenario: seckill
+    keywords: ["SIM-仿真"]
+    goodsIds: [9900003]
+    shipAndConfirm: false
+    thinkTime: { minMs: 100, maxMs: 300, medianMs: 150 }
+    orderPoll:
+      maxAttempts: 30
+      intervalMs: 500
+    seckill:
+      activityId: 990001
+      activitySkuId: 9900001
+      burstUsers: 40            # ≤200，全部应能抢到（库存 1000 足够）
+
+  load:
+    mode: burst                 # 秒杀用齐射，不用阶梯
+    tickMs: 10
+    workers: 40
+    stages:
+      - { duration: 10, targetQps: 5 }
+    burstAtEpochMs: 0           # 0 = 立刻齐射
+
+  http:
+    connectTimeoutMs: 1000
+    readTimeoutMs: 5000
+    maxIdleConnections: 100
+
+  report:
+    intervalSec: 2
+    outDir: "sim-data"
+
+  verify:
+    enabled: true
+    jdbcUrl: "jdbc:mysql://127.0.0.1:3307/zeroai_mall?useSSL=false&serverTimezone=Asia/Shanghai"
+    jdbcUser: "root"
+    jdbcPassword: "@@123456Java"
+    baselineFile: "sim-data/baseline-seckill.json"

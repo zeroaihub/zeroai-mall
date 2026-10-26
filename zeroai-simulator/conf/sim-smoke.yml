@@ -1,0 +1,64 @@
+# 链路验证专用配置（smoke / 断言「所有流程走得通」）
+#
+# 与 sim-local.yml 的唯一区别：把随机分支概率全部置 0，让每一轮必然走完整链路
+#   加购 → 下单 → 等消费端建单 → 模拟支付 → 后台发货 → 确认收货
+#
+# 为什么不能直接用 sim-local.yml 跑 smoke：
+#   normal_purchase 里有 30% 加购放弃 + 15% 不支付，单次 smoke 有 40% 以上概率
+#   停在中途，看起来像「链路不通」，其实是设计内的漏斗分支。
+#
+# 用法：
+#   java -jar target/zeroai-simulator.jar smoke -c conf/sim-smoke.yml
+sim:
+  baseUrl: "http://127.0.0.1:82"
+  adminBaseUrl: "http://127.0.0.1:81"
+  processIndex: 0
+  processCount: 1
+
+  account:
+    poolFile: "sim-data/accounts-local.jsonl"
+    size: 5
+    mobilePrefix: "1990000"
+    mobileStart: 1
+    # 用 bash scripts/dev/get-admin-token.sh 现取（30 分钟有效），走发货→收货需要它
+    adminToken: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJleHAiOjE3OTI5OTQyNTUsImlhdCI6MTc5Mjk5MjQ1NSwibG9naW5fdXNlcl9rZXkiOiJjOTdkYWFmZTJmZmM0MTdiYjIwN2Q5NDg3ODQ5ZWZiMiJ9.uHFK1rzdk-J7NZMooZnavr7g4WvrSWgTqO4BJZW0iaw"
+
+  workload:
+    scenario: normal_purchase
+    keywords: ["SIM-仿真", "仿真测试", "SIM"]
+    goodsIds: [9900001, 9900002]
+    shipAndConfirm: true
+    abandonAfterCartRate: 0.0    # 必然继续下单
+    leaveUnpaidRate: 0.0         # 必然支付
+    thinkTime: { minMs: 100, maxMs: 400, medianMs: 200 }
+    orderPoll:
+      maxAttempts: 30
+      intervalMs: 500
+    seckill:
+      activityId: 990001
+      activitySkuId: 9900001
+      burstUsers: 5
+
+  load:
+    mode: open_loop
+    tickMs: 10
+    workers: 10
+    stages:
+      - { duration: 5, targetQps: 2 }
+    burstAtEpochMs: 0
+
+  http:
+    connectTimeoutMs: 1000
+    readTimeoutMs: 5000
+    maxIdleConnections: 50
+
+  report:
+    intervalSec: 2
+    outDir: "sim-data"
+
+  verify:
+    enabled: true
+    jdbcUrl: "jdbc:mysql://127.0.0.1:3307/zeroai_mall?useSSL=false&serverTimezone=Asia/Shanghai"
+    jdbcUser: "root"
+    jdbcPassword: "@@123456Java"
+    baselineFile: "sim-data/baseline-smoke.json"

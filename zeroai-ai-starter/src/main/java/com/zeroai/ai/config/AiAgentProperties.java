@@ -22,6 +22,29 @@ public class AiAgentProperties {
     private String provider = "openai";
 
     /**
+     * 引擎选择，决定 {@code /ai/chat} 走哪条实现：
+     * <ul>
+     *   <li>{@code spring-ai} —— 默认，零工具单轮问答，复用现有 ChatClient，行为与接入前完全一致。</li>
+     *   <li>{@code agentscope} —— 启用 AgentScope Harness，可调用只读商城工具。</li>
+     * </ul>
+     * 两条通道共用 baseUrl / apiKey / model，不引入第二套密钥约定。
+     * 切换引擎不改变任何前端契约，SSE 事件协议保持一致。
+     */
+    private String engine = "spring-ai";
+
+    /**
+     * AgentScope 工作目录，必须可写。默认落在运行目录下的 .agentscope/workspace（已 gitignore）。
+     */
+    private String agentWorkspace = ".agentscope/workspace";
+
+    /**
+     * Agent 通道的 System Prompt 位置。与 spring-ai 通道的 systemPrompt 分开，
+     * 因为 Agent 需要额外声明「只读工具边界」与「禁止代替用户下单」，
+     * 单轮问答通道则不需要这些约束。
+     */
+    private String agentSystemPrompt = "prompts/mall-agent-system.st";
+
+    /**
      * 模型服务地址，OpenAI 兼容端点。
      */
     private String baseUrl = "https://api.deepseek.com";
@@ -34,7 +57,7 @@ public class AiAgentProperties {
     /**
      * 模型名称。
      */
-    private String model = "deepseek-chat";
+    private String model = "deepseek-flash";
 
     /**
      * 采样温度，导购场景建议 0.3，降低随机性。
@@ -100,6 +123,30 @@ public class AiAgentProperties {
 
     public void setProvider(String provider) {
         this.provider = provider;
+    }
+
+    public String getEngine() {
+        return engine;
+    }
+
+    public void setEngine(String engine) {
+        this.engine = engine;
+    }
+
+    public String getAgentWorkspace() {
+        return agentWorkspace;
+    }
+
+    public void setAgentWorkspace(String agentWorkspace) {
+        this.agentWorkspace = agentWorkspace;
+    }
+
+    public String getAgentSystemPrompt() {
+        return agentSystemPrompt;
+    }
+
+    public void setAgentSystemPrompt(String agentSystemPrompt) {
+        this.agentSystemPrompt = agentSystemPrompt;
     }
 
     public String getBaseUrl() {

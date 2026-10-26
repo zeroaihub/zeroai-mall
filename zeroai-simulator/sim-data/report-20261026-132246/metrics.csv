@@ -1,0 +1,7 @@
+step,total,ok,fail,success_rate,p50_ms,p95_ms,p99_ms,max_ms,mean_ms,errors
+seckill.submit,20,19,1,0.9500,37,40,40,40,34.65,"BIZ_5001=1"
+seckill.token,20,20,0,1.0000,24,24,24,24,19.80,"-"
+seckill.result,19,19,0,1.0000,507,1030,1030,1030,671.84,"-"
+pay.prepay,19,19,0,1.0000,26,29,29,29,25.58,"-"
+order.detail,19,19,0,1.0000,5,9,9,9,5.63,"-"
+seckill.tokenPrepare,1,1,0,1.0000,0,0,0,0,0.00,"-"

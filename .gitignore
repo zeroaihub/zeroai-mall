@@ -62,3 +62,4 @@ front/
 # 本地 Agent 工作记录
 .workbuddy/
 .tmp/
+.agentscope/

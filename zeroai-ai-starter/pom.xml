@@ -40,5 +40,65 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- ===== AgentScope Java（Harness 运行时）=====
+             与 Spring AI 并存而非替换：Spring AI 负责零工具的单轮问答通道，
+             AgentScope 负责需要工具调用的 Agent 通道，由 zeroai.ai.engine 选择。
+             两者共用同一套 OpenAI 兼容配置项，不引入第二套密钥约定。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-harness</artifactId>
+            <version>${agentscope.version}</version>
+            <exclusions>
+                <!-- AgentScope 传递 okhttp-jvm 5.3.2，与 openai-java 需要的 okhttp 4.12.0
+                     同包名（okhttp3.*）且同为 compile 作用域，属于真实的二进制冲突。
+                     AgentScope 默认走 JdkHttpTransport（JDK HttpClient），并未使用 OkHttp，
+                     因此排除它、统一保留 4.12.0 风险最低。若将来启用 OkHttp 传输，
+                     必须重新评估本排除，见 ADR-001 风险条款。 -->
+                <exclusion>
+                    <groupId>com.squareup.okhttp3</groupId>
+                    <artifactId>okhttp-jvm</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-openai</artifactId>
+            <version>${agentscope.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.squareup.okhttp3</groupId>
+                    <artifactId>okhttp-jvm</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!-- ===== 商城只读工具所需的领域契约 =====
+             optional=true：只有本模块的 mall.tool 包需要它，不向其他引用方透传整套持久化栈。
+             注意：domain-api 并非纯接口包（自带 web/amqp/mybatis-plus 与 Mapper），
+             因此本模块的定位已从「通用 AI starter」收敛为「商城 AI 模块」，
+             通用能力仅限 com.zeroai.ai.core / config / web 三处。 -->
+        <dependency>
+            <groupId>com.zeroai</groupId>
+            <artifactId>zeroai-domain-api</artifactId>
+            <version>${project.version}</version>
+            <optional>true</optional>
+        </dependency>
+        <!-- victools 版本仲裁（必须显式三大件，不能只钉 generator）：
+             显式 version 优先于 dependencyManagement，因此这里能把 BOM 顶下来的 5.0.0 拉回 4.38.0。
+             module-swagger-2 若留在 5.0.0 会与 4.38.0 的 generator 混用，故一并钉死。 -->
+        <dependency>
+            <groupId>com.github.victools</groupId>
+            <artifactId>jsonschema-generator</artifactId>
+            <version>${victools.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.victools</groupId>
+            <artifactId>jsonschema-module-jackson</artifactId>
+            <version>${victools.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.victools</groupId>
+            <artifactId>jsonschema-module-swagger-2</artifactId>
+            <version>${victools.version}</version>
+        </dependency>
     </dependencies>
 </project>

@@ -1,0 +1,29 @@
+{
+  "session_id" : "u1001",
+  "user_id" : "1001",
+  "summary" : "",
+  "context" : [ ],
+  "reply_id" : "51825a6c37e84d0699cb92a9428a814a",
+  "cur_iter" : 0,
+  "shutdown_interrupted" : false,
+  "permission_context" : {
+    "mode" : "default",
+    "working_directories" : { },
+    "allow_rules" : { },
+    "deny_rules" : { },
+    "ask_rules" : { }
+  },
+  "tool_context" : {
+    "max_cache_files" : 100,
+    "max_cache_bytes" : 25000.0,
+    "activated_groups" : [ ],
+    "spawn_registry" : { }
+  },
+  "tasks_context" : {
+    "tasks" : [ ]
+  },
+  "plan_mode_context" : {
+    "plan_active" : false,
+    "current_plan_file" : null
+  }
+}
