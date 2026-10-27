@@ -1,221 +1,259 @@
-# zeroai-mall · AI Agent 二开版
+<div align="center">
 
-> 一个覆盖完整交易主干（商品、购物车、订单、库存、支付、秒杀、本地消息、对账）的电商商城后端，在此基础上做两件事：
-> **① 全栈升级到 Spring Boot 4.1.2 + JDK 21**；
-> **② 抽出可复用的 AI Agent 能力层 `zeroai-ai-starter`，把 AI 接进真实交易链路，而不是做一个游离在业务之外的聊天 demo。**
+<h1>zeroai-mall</h1>
 
-技术基准文档见 [`docs/AI-Agent接入实战方案.md`](./docs/AI-Agent接入实战方案.md)，执行规程见 [`docs/AGENT_INTEGRATION_SOP.md`](./docs/AGENT_INTEGRATION_SOP.md)。
+<p><b>一个把 AI Agent 真正接进交易链路的电商系统</b></p>
+
+<p>AI 不是挂在旁边的聊天窗，而是能查真实库存、读真实订单、在用户点头之后<br/>
+才敢动一笔钱的「导购」</p>
+
+<p>
+  <img alt="Spring Boot" src="https://img.shields.io/badge/Spring%20Boot-4.1.2-6DB33F?logo=springboot&logoColor=white">
+  <img alt="JDK" src="https://img.shields.io/badge/JDK-21-ED8B00?logo=openjdk&logoColor=white">
+  <img alt="Spring AI" src="https://img.shields.io/badge/Spring%20AI-2.0.2-6DB33F">
+  <img alt="AgentScope" src="https://img.shields.io/badge/AgentScope-Harness-6C4AB6">
+</p>
+<p>
+  <img alt="Vue" src="https://img.shields.io/badge/Vue-3-42B883?logo=vuedotjs&logoColor=white">
+  <img alt="MySQL" src="https://img.shields.io/badge/MySQL-8-4479A1?logo=mysql&logoColor=white">
+  <img alt="Redis" src="https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white">
+  <img alt="Elasticsearch" src="https://img.shields.io/badge/Elasticsearch-7.14-005571?logo=elasticsearch">
+  <img alt="RabbitMQ" src="https://img.shields.io/badge/RabbitMQ-3.12-FF6600?logo=rabbitmq&logoColor=white">
+</p>
+
+<p>
+  <a href="#2-ai-能力全景">AI 能力</a> ·
+  <a href="#3-正在迭代">正在迭代</a> ·
+  <a href="#4-路线图">路线图</a> ·
+  <a href="#9-快速开始">快速开始</a> ·
+  <a href="#12-文档地图">文档地图</a>
+</p>
+
+</div>
 
 ---
 
 ## 目录
 
 - [1. 项目定位](#1-项目定位)
-- [2. 版本与演进](#2-版本与演进)
-- [3. 技术栈](#3-技术栈)
-- [4. 模块结构](#4-模块结构)
-- [5. AI Agent 能力](#5-ai-agent-能力)
-- [6. 架构分层](#6-架构分层)
-- [7. 核心业务能力](#7-核心业务能力)
-- [8. 快速开始](#8-快速开始)
-- [9. 前后端联调](#9-前后端联调)
-- [10. 冒烟基线](#10-冒烟基线)
-- [11. 文档地图](#11-文档地图)
-- [12. 开发规范](#12-开发规范)
-- [13. 已知遗留项](#13-已知遗留项)
-- [14. 许可与致谢](#14-许可与致谢)
+- [2. AI 能力全景](#2-ai-能力全景)
+  - [2.1 一条消息的完整旅程](#21-一条消息的完整旅程)
+  - [2.2 工具矩阵](#22-工具矩阵)
+  - [2.3 写操作：Human-in-the-loop](#23-写操作human-in-the-loop)
+  - [2.4 SSE 事件协议](#24-sse-事件协议)
+  - [2.5 对话历史与记忆](#25-对话历史与记忆)
+  - [2.6 六道工程防线](#26-六道工程防线)
+  - [2.7 实测表现](#27-实测表现)
+  - [2.8 AI 能力开关与配置](#28-ai-能力开关与配置)
+- [3. 正在迭代](#3-正在迭代)
+- [4. 路线图](#4-路线图)
+- [5. 技术栈](#5-技术栈)
+- [6. 模块结构](#6-模块结构)
+- [7. 架构分层](#7-架构分层)
+- [8. 核心交易能力](#8-核心交易能力)
+- [9. 快速开始](#9-快速开始)
+- [10. 前后端联调](#10-前后端联调)
+- [11. 质量基线](#11-质量基线)
+- [12. 文档地图](#12-文档地图)
+- [13. 开发规范](#13-开发规范)
+- [14. 已知遗留项](#14-已知遗留项)
+- [15. 许可](#15-许可)
 
 ---
 
 ## 1. 项目定位
 
-**一句话**：一个真实可跑通的电商后端，加一层「不侵入业务」的 AI Agent 能力，用来验证 **AI 到底能不能在交易系统里干实事**。
+**一个能真实跑通的电商交易系统**（商品、购物车、订单、库存、支付、秒杀、本地消息、对账），加一层**不侵入业务的 AI Agent 能力**，用来回答一个具体问题：
 
-具体验证三件事：
+> AI 到底能不能在交易系统里干实事，而不是做一个演示用的聊天框？
 
-| 目标 | 落地方式 |
+具体立了三条规矩：
+
+| 原则 | 落地方式 |
 |---|---|
-| AI 不写死在业务代码里 | 通用能力全部收敛到 `zeroai-ai-starter`，业务模块只在启动类加一个注解 |
-| AI 说得出的话必须查得到 | 商品、库存、价格一律走工具调用（Tool Calling），禁止模型凭空生成 |
-| AI 不能动钱和库存 | 写操作（加购、下单）只输出「提议」，必须由用户在界面上确认后才执行（Human-in-the-loop） |
+| **AI 不写死在业务代码里** | 通用能力收敛到 `zeroai-ai-starter`，业务工具与业务模块分居两侧，starter 看不到订单表 |
+| **AI 说得出的话必须查得到** | 商品、价格、库存、订单一律走工具调用，Prompt 里写死「未调用工具就等于不知道」 |
+| **AI 不能动钱和库存** | Agent 没有写工具。它只能生成「待确认提议」，真正的下单必须由用户在界面上点第二次 |
 
-**边界**：`zeroai-ai-starter` 只依赖 Spring / Spring AI，**零业务依赖**；业务工具后续放在独立的 `zeroai-ai-mall` 模块，只依赖 `zeroai-domain-api`，编译期看不到任何写入口。
+这条边界不是文档里的许诺，而是编译期和运行期都能验证的：`zeroai-ai-starter` 与业务模块无依赖关系，工具层只暴露只读查询 + 一张提议表。
 
-## 2. 版本与演进
+---
 
-| 项 | 当前状态 |
-|---|---|
-| 版本号 | **2.0.0**（`pom.xml`） |
-| 基线 tag | `p0-base`（Agent 改造前的最后一个可运行状态） |
-| 基础框架 | **Spring Boot 4.1.2 / Java 21** |
-| AI 能力 | **Spring AI 2.0.2 + `zeroai-ai-starter`** |
-| 前端 | 已放到 `web/`（独立仓库，非本仓库子模块） |
+## 2. AI 能力全景
 
-### 2.1 本版主要改造内容
+### 2.1 一条消息的完整旅程
 
-| 类别 | 改动 | 说明 |
-|---|---|---|
-| 框架 | Boot 3.5.14 → **4.1.2** | 强制要求 JDK 21；Spring AI 2.x 的编译基线 |
-| 框架 | Spring AI 1.1.8 → **2.0.2** | `OpenAiApi` 已移除，改用官方 SDK `OpenAIOkHttpClient` 构建 `ChatModel` |
-| 框架 | Jackson 2 → **Jackson 3** | 包名 `tools.jackson.*`，异常体系改为 `JacksonException` |
-| 框架 | Spring Security 6 → **7** | `UserDetails#getAuthorities()` 返回 `null` 会直接 NPE（已修） |
-| 框架 | Sa-Token 1.46 | 登录会话对象必须登记 JSON 白名单（`SaJsonType`） |
-| 新增模块 | **`zeroai-ai-starter`** | 自动装配 + 外置 Prompt + SSE 通道，默认关闭 |
-| 新增脚本 | `scripts/dev/gen-placeholder-images.py` | 生成 `/upload/**` 占位图（仓库不含图片素材） |
-| 新增脚本 | `scripts/dev/seed-es-goods.py` | 一键建 ES 索引并灌入商品数据 |
-| 新增脚本 | `scripts/dev/set-login-code.py` | 本地免短信登录（写验证码到 Redis） |
-| 修复 | `LoginUserDetail#getAuthorities()` | Security 7 下后台登录必失败的真实 bug |
-| 修复 | `docker-compose` ES 密码 | 列表写法把引号写进了密码值，导致 ES 401 |
-| 编排 | `docker-compose.docker-desktop.yml` | Docker Desktop 下 `network_mode: host` 不转发端口 |
-| 文档 | `docs/` 全套 | 迁移手册、接入 SOP、冒烟清单 |
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as H5 用户
+    participant API as zeroai-mobile-api
+    participant A as AgentScope Harness
+    participant T as 商城工具层
+    participant D as MySQL / ES / Redis
 
-### 2.2 版本演进策略
-
-项目已经做过**结构性升级**（Boot 4 + JDK 21 + Jackson 3），主线只往前走：
-
-- **框架升级** → 不再回退，只往前走（Boot 4.x → 4.y）。
-- 每次升级前先打 tag，升级后对照 `docs/BOOT4_MIGRATION_NOTES.md` 检查是否有新的包路径搬迁。
-- 早期基线只作历史参考，不再跟进。
-
-## 3. 技术栈
-
-| 分类 | 技术 | 版本 |
-|---|---|---|
-| 语言 / 运行时 | Java | **21**（产物 target 21，运行时必须 ≥ 21） |
-| 基础框架 | Spring Boot | **4.1.2** |
-| AI 框架 | Spring AI | **2.0.2** |
-| AI SDK | OpenAI Java SDK（OkHttp 实现） | 4.80.0 |
-| Web 与安全 | Spring MVC、Spring Security 7 + JWT（后台）、Sa-Token（移动端） | Sa-Token 1.46.0 |
-| 数据访问 | MyBatis-Plus / MySQL 8 / Druid | MyBatis-Plus 3.5.17 |
-| 缓存 | Redis + Lettuce 7（**不可手工降版本**） | BOM 管理 |
-| 搜索 | Elasticsearch 7（ik + pinyin 分词） | 7.14.0 |
-| 消息 | RabbitMQ + 延迟消息插件 + 本地消息表 | 3.12.7 |
-| 定时任务 | Spring `@Scheduled`（运行在 admin-api 进程内） | — |
-| 支付 | 微信支付、支付宝、易支付 | — |
-| 构建 | Maven | **≥ 3.6.3**（`maven-compiler-plugin 3.15.0` 的要求） |
-| 测试 | JUnit 5 / Mockito / Spring Boot Test | — |
-
-> **版本红线**：`lettuce` 与 `netty` 的版本**必须**交给 Boot BOM 管理。手工钉旧版会出现「编译和单测全绿、启动即 `NoClassDefFoundError`」——Spring Data Redis 4 需要 Lettuce 7，Lettuce 7 需要 Netty 4.2。
-
-## 4. 模块结构
-
-```text
-zeroai-mall
-├── zeroai-admin-api              后台管理接口（81）+ 交易治理定时任务
-├── zeroai-mobile-api             H5 / 移动端接口（82），依赖 ai-starter
-├── zeroai-ai-starter             ★ AI Agent 通用能力（自动装配 / 外置 Prompt / SSE 通道）
-├── zeroai-common                 通用配置、切面、策略接口、通用模型和基础设施
-├── zeroai-domain-api             跨领域契约：实体、Mapper、Service 接口、VO、枚举
-├── zeroai-domain-trade           订单、支付编排、状态机、本地消息、对账
-├── zeroai-domain-inventory       库存冻结、库存流水、Redis 库存快照、库存对账
-├── zeroai-domain-goods           商品、SKU、类目、搜索与 ES 同步
-├── zeroai-domain-cart            购物车读写与选中商品聚合
-├── zeroai-domain-promotion       优惠券、营销位和 Diamond 策略实现
-├── zeroai-payment-channel        微信、支付宝、易支付的支付 / 退款渠道适配
-├── zeroai-data
-│   ├── zeroai-data-redis         Redis 访问与缓存工具
-│   └── zeroai-data-elastic       Elasticsearch 访问能力
-├── zeroai-message
-│   ├── zeroai-message-core       RabbitMQ 队列、交换机、绑定配置
-│   └── zeroai-message-consumer   MQ 消费者（订单落库、超时关单）
-├── zeroai-util                   通用工具、异常、枚举、常量
-├── web                             前端源码（两个独立仓库的本地副本，非子模块）
-│   ├── zeroai-mobile             H5 商城（Vue 3 + Vite + Vant）
-│   └── zeroai-admin              运营后台（Vue 3 + Vite + Element Plus）
-├── db-init                         数据库初始化和增量治理 SQL
-├── scripts/dev                     开发辅助脚本（灌数、验证码、占位图）
-├── docs                            迁移手册、接入 SOP、冒烟清单
-├── redis / rabbitmq / es / nginx   中间件配置
-└── docker-compose*.yml             本地或服务器编排脚本
+    U->>API: GET /ai/chat?q=帮我找 3000 以内的手机（SSE）
+    API->>API: 入口线程取 userId 快照（ThreadLocal 不能进异步）
+    API->>A: 按 userId+session 建 Harness，注册工具白名单
+    loop 推理—行动循环，最多 6 步
+        A->>T: tool call
+        T->>D: 只读查询 / 写提议表
+        T-->>A: observation
+        A-->>API: thinking · tool_result
+    end
+    A-->>API: message_delta 文本流
+    API-->>U: SSE 增量渲染（打字机）
+    API->>D: 落一轮问答到 ES
+    API-->>U: done{steps, truncated}
 ```
 
-### 4.1 `zeroai-ai-starter` 内部结构
+三个不能省的细节：
 
-```text
-zeroai-ai-starter/src/main/
-├── java/com/zeroai/ai/
-│   ├── annotation/EnableAiAgent.java            显式开启入口（也可依赖自动装配）
-│   ├── config/AiAgentProperties.java            zeroai.ai.* 全部配置项
-│   ├── config/AiAgentAutoConfiguration.java     装配 ChatModel / ChatClient / 控制器
-│   ├── prompt/PromptLoader.java                 classpath 外置 Prompt 加载
-│   └── web/
-│       ├── AiChatController.java                SSE 流式端点
-│       ├── AiEvent.java / AiEventType.java      SSE 事件与类型常量
-│       └── AiUserContext.java                   用户上下文 SPI（接入方实现）
-└── resources/
-    ├── prompts/guide-system.st                  System Prompt（外置，可版本化）
-    └── META-INF/spring/...AutoConfiguration.imports
+- **用户快照必须在入口线程取**。Sa-Token 的会话是 ThreadLocal，进了异步回调就已经失效，晚一步就是越权事故。
+- **工具白名单每会话重建**。`ToolSurfacePolicy` 会主动剪掉 SDK 自带但业务不需要的工具（如 `skill_manage`、`propose_skill`），日志里能看到「已按策略移除越权工具」。
+- **SSE 必须在流内报错**。`@RestControllerAdvice` 管不到 SSE 端点，异常只能以 `error` 事件下发，否则前端拿到的是一个静默断开的连接。
+
+### 2.2 工具矩阵
+
+Agent 手上只有 7 个工具，6 个只读、1 个只写提议：
+
+| 工具 | 能力 | 性质 | 权限边界 |
+|---|---|:--:|---|
+| `search_products` | 关键词检索在售商品，返回 ID / 名称 / 价格 / 销量 | 读 | 仅上架商品 |
+| `get_product_detail` | 商品详情：名称、价格、简介、可选规格与库存 | 读 | — |
+| `get_stock_status` | 按 SKU 查可售库存与冻结库存 | 读 | 绝不改库存 |
+| `list_my_orders` | 当前用户订单：订单号、金额、状态、商品名 | 读 | 强制按 userId 过滤 |
+| `list_my_cart` | 当前用户购物车：cardId、商品名、单价、数量、勾选态 | 读 | 强制按 userId 过滤 |
+| `list_my_addresses` | 当前用户收货地址（姓名、手机号脱敏） | 读 | 强制按 userId 过滤 |
+| `propose_order` | 生成「创建订单」待确认提议 | **写（仅提议表）** | 不创建订单，只落一张 PENDING 记录 |
+
+**没有的能力也明确写清**：退款、改地址、取消订单、加库存、物流轨迹——Agent 一律拒绝，而不是编一个答案。
+
+### 2.3 写操作：Human-in-the-loop
+
+```mermaid
+flowchart LR
+    U["用户：用默认地址把购物车下单"] --> A["Agent"]
+    A -->|"propose_order"| P[("ai_action_proposal<br/>PENDING，TTL 600s")]
+    P -->|"confirm_action 事件"| C["前端提议卡片<br/>金额 · 件数 · 有效期"]
+    C -->|"用户点击确认下单"| API["POST /ai/action/confirm/{no}"]
+    API -->|"归属 · 过期 · 价格 · 库存 · 幂等"| O["IMobileOrderService.asyncSubmit"]
+    O --> R["真实订单"]
+    A -.->|"没有写工具"| X["不能直接写库或下单"]
 ```
 
-## 5. AI Agent 能力
+设计要点：
 
-### 5.1 设计原则
+- **提议是快照，不是订单**。生成提议时冻结商品、数量、单价、地址、优惠券，用户确认前价格变了就重新生成。
+- **确认接口是唯一写入口**，且严格复用原有下单服务 `asyncSubmit`，不新开一条绕过状态机的旁路。
+- **幂等键按 attempt 生成**：只有「PENDING 且未过期」的提议才复用。否则用户确认过一单之后再问一次，会拿到一张 `CONFIRMED` 的旧提议，点一下就是「已确认过」。
+- **五道拒绝全部实测**：跨用户确认、过期、重复确认（含双击并发）、价格变化、库存不足。
 
-1. **默认关闭**：`zeroai.ai.enabled=false` 时**不注册任何 AI Bean**，应用行为与接入前完全一致，不产生任何模型费用。
-2. **零业务依赖**：starter 不认识商品、订单、库存；业务能力通过 SPI 由接入方注册。
-3. **不侵入 Controller**：SSE 端点由 starter 提供，路径可配，业务侧无需重复实现。
-4. **密钥只走环境变量**：`LLM_API_KEY` 不允许写进任何配置文件。
-5. **失败可降级**：模型异常时回落到既有能力（普通搜索），而不是给用户一个报错白屏。
-
-### 5.2 当前实现状态
-
-| 阶段 | 内容 | 状态 |
-|---|---|---|
-| P0 | 地基：环境、冒烟基线、tag `p0-base` | ✅ 完成（6/6 冒烟通过） |
-| P1 | Hello LLM：starter 装配 + SSE 流式通道 | ✅ 完成 |
-| P2 | 结构化输出（商品卡片、订单摘要） | ⬜ 待做 |
-| P3 | 只读工具化（搜商品、查库存、查物流） | ⬜ 待做 |
-| P4 | 写操作 + Human-in-the-loop（加购、下单确认） | ⬜ 待做 |
-| P5 | Memory 与会话（多轮上下文、会话归属校验） | ⬜ 待做 |
-| P6 | RAG 知识库（PGVector + 商品/售后知识） | ⬜ 待做 |
-| P7 | 多步 Agent 与工程化（限流、审计、评测集） | ⬜ 待做 |
-| P8 | MCP 化（对外暴露工具） | ⬜ 加分项 |
-
-阶段定义、门禁与偏差登记全部在 [`docs/AGENT_INTEGRATION_SOP.md`](./docs/AGENT_INTEGRATION_SOP.md)。
-
-### 5.3 SSE 事件协议
+### 2.4 SSE 事件协议
 
 端点：`GET /ai/chat?q=你好`（`produces: text/event-stream`，路径由 `zeroai.ai.chat-path` 控制）
 
-| 事件名 | 方向 | 说明 |
+| 事件 | 说明 | 前端渲染 |
 |---|---|---|
-| `thinking` | 服务端 → 前端 | 过程态（如「正在查库存」） |
-| `tool_result` | 服务端 → 前端 | 工具执行结果摘要 |
-| `message_delta` | 服务端 → 前端 | 文本增量，前端做打字机效果 |
-| `product_cards` | 服务端 → 前端 | 商品卡片列表 |
-| `confirm_action` | 服务端 → 前端 | 待用户确认的写操作提议 |
-| `done` | 服务端 → 前端 | 本轮结束，携带步数与 token 统计 |
-| `degrade` | 服务端 → 前端 | 模型不可用，已降级到既有能力 |
-| `error` | 服务端 → 前端 | 错误码 + 友好文案 |
+| `thinking` | 过程态，如「正在查库存」 | 工具过程态 chip |
+| `tool_result` | 工具执行结果摘要 | 完成态 chip（✓） |
+| `message_delta` | 文本增量 | 打字机累加 |
+| `confirm_action` | 待用户确认的写操作提议 | 提议卡片 + 「确认下单」 |
+| `done` | 本轮结束，携带 `steps` / `truncated` | 结束 loading |
+| `degrade` | 模型不可用，已降级到既有能力 | 轻提示，不打断 |
+| `error` | 错误码 + 友好文案 | 红色气泡 |
+| `product_cards` | 商品卡片列表（协议已定义，**尚未下发**） | — |
 
-> **SSE 三个硬约束**（都是踩过的）：
-> ① `SseEmitter` 必须显式设超时，容器默认 30s 会截断长回答（默认已设 120s）；
-> ② `@RestControllerAdvice` 接管不了 SSE 端点，异常要在流内以 `error` 事件下发；
-> ③ Sa-Token / Security 上下文是 ThreadLocal，**必须在入口线程取用户快照**再进异步回调。
+> **为什么不用 `EventSource`**：它不能自定义请求头，而 `/ai/**` 必须带 `Authorization`（不存在匿名白名单）。
+> 把 token 塞进 query 会进访问日志和浏览器历史，所以 H5 用 `fetch` + `ReadableStream` 手动解析 SSE。
 
-### 5.4 配置项
+### 2.5 对话历史与记忆
+
+| 能力 | 实现 | 状态 |
+|---|---|:--:|
+| 对话落库 | ES 索引 `zeroai_ai_chat`，`GET/DELETE /ai/history`，自动建 mapping（1 分片 0 副本） | ✅ |
+| 历史回放 | 进页拉最近 20 轮还原成气泡，「清空」同时删服务端记录 | ✅ |
+| 落库时机 | 只在 `done` / `error` 写入；断连不存半句、匿名不存、空回答不存、超长截断 | ✅ |
+| 写入容错 | 存历史失败只 `warn`，绝不影响这一次对话 | ✅ |
+| 跨会话记忆 | `UserPreferenceMemory`（用户偏好）+ `MemorySafetyGuard`（写入脱敏校验） | 🚧 默认关闭 |
+| 会话状态清理 | 清空历史目前只清 ES，不清 AgentScope 的 session | 🚧 |
+
+历史存储是 **SPI**：`zeroai-ai-starter` 只定义 `AiChatHistoryStore`，ES 实现在 `zeroai-mobile-api` 里。换 MySQL、换 Mongo，starter 一行不用改。
+
+### 2.6 六道工程防线
+
+做过才知道，AI 接进交易系统真正难的不是「让它会说」，而是「让它不乱说、不越权、不失控」。
+
+| 防线 | 问题 | 做法 |
+|---|---|---|
+| **防编造** | 模型会顺手断言「你购物车里有 2 件已勾选」，但这一轮根本没调 `list_my_cart` | Prompt 硬约束：未调用工具 = 不知道；工具报错/空结果不许用「通常…」补全；同会话重复提问必须重查 |
+| **防越权** | 跨用户查订单、顺手改库存 | 工具层强制 `userId` 过滤 + 工具面策略裁剪无关工具 + 跨用户提议确认实测拒绝 |
+| **防失控** | 工具循环停不下来，账单跟着涨 | `max-steps=6`、`max-tool-calls-per-turn=6`、单工具 `tool-timeout-ms=3000` |
+| **防格式错乱** | 移动端气泡只渲染纯文本，模型却吐 Markdown 表格 | Prompt 禁 `**` / `#` / 表格 / 代码块，并明确「不要模仿历史回答里的表格」 |
+| **可观测** | 出问题只能靠猜 | 结构化日志：`ai.model.call session=... ms=... in=... out=... cached=...`、`ai.tool.call tool=... state=SUCCESS` |
+| **可降级** | 模型挂了就白屏 | `degrade-on-error=true`，模型异常回落既有能力（普通搜索）并下发 `degrade` 事件 |
+
+### 2.7 实测表现
+
+本机单实例、真实 DeepSeek 调用、真实 ES / MySQL，冷启动单轮、样本量 24/组（只够定方向，不做显著性结论）：
+
+| 指标 | 实测 | 目标 | 结论 |
+|---|---|---|---|
+| 无错误率 | 24 / 24 | 100% | 达标 |
+| 越界拒答（退款 / 下单） | 10 / 10 | 100% | 达标 |
+| 越权泄漏（他人订单号） | 0 | 0 | 达标 |
+| 单轮 token | 8.2k | < 4k | 🚧 偏高 |
+| 步数 P95 | 6 | ≤ 4 | 🚧 偏高 |
+| 首字 P95 | 7.0s | < 3s | 🚧 待优化 |
+
+典型响应时间：闲聊 3.1s / 3 步搜索 5.8s / 单工具订单查询 2.7s。评测集与脚本在 `scripts/agent/baseline/`，基线明细见 [`docs/agent/BASELINE-METRICS.md`](./docs/agent/BASELINE-METRICS.md)。
+
+### 2.8 AI 能力开关与配置
+
+**默认全关**。`AI_ENABLED=false` 时不注册任何 AI Bean，应用行为与未接入时完全一致，不产生任何模型费用。
+
+```bash
+# .env 里平铺写即可，yml 已显式映射
+AI_ENABLED=true
+AI_ENGINE=agentscope          # spring-ai（单轮问答）/ agentscope（带工具，推荐）
+LLM_BASE_URL=https://api.deepseek.com
+LLM_API_KEY=sk-xxxxxxxxxxxxxxxx
+LLM_MODEL=deepseek-flash
+AI_ACTION_ENABLED=true        # 下单提议（Agent 只生成提议，用户确认后才下单）
+AI_HISTORY_ENABLED=true       # 对话历史落 ES
+```
 
 ```yaml
 zeroai:
   ai:
-    enabled: ${AI_ENABLED:false}          # 总开关，关闭时不注册任何 Bean
-    provider: openai                       # OpenAI 兼容协议（DeepSeek / 通义 / 硅基流动）
-    base-url: ${LLM_BASE_URL:https://api.deepseek.com}
-    api-key: ${LLM_API_KEY:}               # 只能来自环境变量
-    model: ${LLM_MODEL:deepseek-chat}
-    temperature: 0.3                       # 导购场景降低随机性
-    max-tokens: 1024                       # 单次回答上限，防成本失控
-    system-prompt: prompts/guide-system.st # 外置 Prompt，便于版本化与回归
-    chat-path: /ai/chat
-    sse-timeout-ms: 120000
-    max-steps: 6                           # 单轮最大工具调用步数，防死循环
+    enabled: ${AI_ENABLED:false}
+    engine: ${AI_ENGINE:spring-ai}        # 双引擎：单轮问答 / 带工具的 Agent
+    model: ${LLM_MODEL:deepseek-flash}
+    max-steps: 6                          # 单轮最大工具步数，防死循环
     max-tool-calls-per-turn: 6
-    max-history-turns: 8                   # 进入上下文的历史轮数
-    tool-timeout-ms: 3000                  # 单工具超时，超时转 observation 回喂模型
+    tool-timeout-ms: 3000                 # 单工具超时，超时转 observation 回喂模型
+    sse-timeout-ms: 120000                # 容器默认 30s 会截断长回答
     degrade-on-error: true
+    action:                               # 写操作提议
+      enabled: ${AI_ACTION_ENABLED:false}
+      proposal-ttl-seconds: 600
+      max-items-per-proposal: 10
+    history:                              # 对话历史
+      enabled: ${AI_HISTORY_ENABLED:true}
+      index: zeroai_ai_chat
+      max-answer-chars: 8000
+    harness:                              # AgentScope 能力位，默认全关
+      skills-enabled: false
+      memory-enabled: false
+      plan-mode-enabled: false
+      observability-enabled: true
 ```
 
-### 5.5 在别的项目里复用（三步）
+> **换模型不用改代码**：走 OpenAI 兼容协议，DeepSeek / 通义 / 硅基流动 / 本地 vLLM 只改 `LLM_BASE_URL` + `LLM_MODEL`。
+> **密钥只走环境变量**，任何配置文件里都不允许出现 `LLM_API_KEY` 明文。
+
+<details>
+<summary><b>在别的项目里复用这套能力（三步）</b></summary>
 
 ```java
 // 1) 引依赖
@@ -226,16 +264,144 @@ zeroai:
 @SpringBootApplication
 public class DemoApplication { ... }
 
-// 3) 提供自己的用户上下文（不实现则返回匿名，仅供无工具对话使用）
+// 3) 提供自己的用户上下文（不实现则匿名，只能无工具对话）
 @Bean
 AiUserContext aiUserContext() {
     return () -> SecurityUtils.currentUserId();
 }
 ```
 
-配置 `AI_ENABLED=true` 与 `LLM_API_KEY` 后，`/ai/chat` 即可用。**业务工具不属于 starter**，由接入方在自己的业务模块注册，保证 AI 模块永不反向依赖业务。
+业务工具不属于 starter，由接入方在自己的业务模块注册——这样 AI 模块永远不会反向依赖业务模块。
 
-## 6. 架构分层
+</details>
+
+---
+
+## 3. 正在迭代
+
+当前迭代主题：**从「能跑通」到「敢放量」**。
+
+| 事项 | 现状 | 下一步 |
+|---|---|---|
+| **商品卡片** | 协议位留好（`product_cards`），实际仍返回纯文本 | 搜索结果直接渲染成卡片，可点击进详情，减少一轮追问 |
+| **首字延迟** | P95 7.0s，主要是 8.2k token 的上下文 | 精简 Prompt、裁剪 tool schema、流式前置，目标压到 3s 内 |
+| **步数收敛** | P95 6 步，接近上限 6 | 教模型合并查询（一次拿够），目标 P95 ≤ 4 |
+| **提议的强校验** | 模型偶发把未勾选商品计入提议 | 在 `ProposeOrderTool` 服务端兜底：未勾选项直接拒绝计入，不依赖 Prompt |
+| **记忆能力** | `UserPreferenceMemory` 已实现，默认关 | 灰度打开，先只记「类目偏好 / 预算区间」两类低风险事实 |
+| **会话级重置** | 清空历史只清 ES | 同步清 AgentScope session，否则模型还记得上一轮的购物车 |
+| **物流能力缺口** | 无物流工具，问「我的快递到哪了」只能答查不到 | 接快递 100 / 顺丰 API，作为第 8 个只读工具 |
+| **H5 体验** | 支持流式、工具过程态、提议卡片 | 增加中断续答、消息重发、多轮引用商品跳转 |
+
+---
+
+## 4. 路线图
+
+**已交付**
+
+| 阶段 | 主题 | 交付内容 |
+|:--:|---|---|
+| P0 | 地基 | 环境编排、冒烟基线、可回滚 tag |
+| P1 | Hello LLM | starter 装配 + SSE 流式通道 |
+| P2 | 引擎适配 | AgentScope 通道接入，双引擎可切换 |
+| P3 | 只读工具 | 搜索 / 详情 / 库存 / 订单 / 购物车 / 地址 |
+| P4 | 事件流 | 白名单映射、并发保护、错误归类、取消 |
+| P5 | Harness | 工作区隔离、技能、记忆、中间件、Plan Mode（均默认关） |
+| P6 | HITL | 下单提议 + 独立确认接口 + 五道校验 |
+| P6.1 | 体验 | 提示词事实约束 + H5 AI 导购页 |
+| P6.2 | 工程 | 对话历史落 ES + 配置映射 + 提议幂等修复 |
+
+**规划中**
+
+| 阶段 | 主题 | 目标 | 优先级 |
+|:--:|---|---|:--:|
+| P7 | RAG 知识库 | 商品知识 / 售后政策入库，答得了「这个能七天无理由吗」 | 高 |
+| P8 | 多模态 | 拍图搜同款、小票识别 | 中 |
+| P9 | 工程化放量 | 限流、审计、成本看板、离线评测集回归 | 高 |
+| P10 | MCP 化 | 把商城工具以 MCP Server 形式对外暴露，供其他 Agent 复用 | 中 |
+| P11 | 主动式 Agent | 到货 / 降价 / 库存回补提醒，事件驱动而非问答驱动 | 低 |
+
+阶段定义、门禁与偏差登记在 [`docs/AGENT_INTEGRATION_SOP.md`](./docs/AGENT_INTEGRATION_SOP.md)，每个阶段的实测记录在 [`docs/agent/`](./docs/agent/)。
+
+---
+
+## 5. 技术栈
+
+| 分类 | 技术 | 版本 |
+|---|---|---|
+| 语言 / 运行时 | Java | **21**（产物 target 21，运行时必须 ≥ 21） |
+| 基础框架 | Spring Boot | **4.1.2** |
+| AI 框架 | Spring AI + AgentScope Harness | Spring AI **2.0.2** |
+| AI SDK | OpenAI Java SDK（OkHttp） | 4.80.0 |
+| Web 与安全 | Spring MVC、Spring Security 7 + JWT（后台）、Sa-Token（移动端） | Sa-Token 1.46.0 |
+| 数据访问 | MyBatis-Plus / MySQL 8 / Druid | MyBatis-Plus 3.5.17 |
+| 缓存 | Redis + Lettuce 7（**不可手工降版本**） | BOM 管理 |
+| 搜索 | Elasticsearch 7（ik + pinyin 分词） | 7.14.0 |
+| 消息 | RabbitMQ + 延迟消息插件 + 本地消息表 | 3.12.7 |
+| 定时任务 | Spring `@Scheduled`（运行在 admin-api 进程内） | — |
+| 支付 | 微信支付、支付宝、易支付 | — |
+| 前端 | Vue 3 + Vite + Vant 4（H5）、Element Plus（后台） | — |
+| 构建 | Maven | **≥ 3.6.3** |
+| 测试 | JUnit 5 / Mockito / Spring Boot Test | 80 个测试类 / 300+ 用例 |
+
+> **版本红线**：`lettuce` 与 `netty` 必须交给 Boot BOM 管理。手工钉旧版会出现「编译和单测全绿、启动即 `NoClassDefFoundError`」——Spring Data Redis 4 需要 Lettuce 7，Lettuce 7 需要 Netty 4.2。
+
+---
+
+## 6. 模块结构
+
+```text
+zeroai-mall
+├── zeroai-admin-api              后台管理接口（81）+ 交易治理定时任务
+├── zeroai-mobile-api             H5 / 移动端接口（82），AI 能力接入方
+├── zeroai-ai-starter             ★ AI Agent 通用能力（自动装配 / 工具 / SSE / 历史 SPI）
+├── zeroai-common                 通用配置、切面、策略接口、基础设施
+├── zeroai-domain-api             跨领域契约：实体、Mapper、Service 接口、VO、枚举
+├── zeroai-domain-trade           订单、支付编排、状态机、本地消息、对账
+├── zeroai-domain-inventory       库存冻结、库存流水、Redis 快照、库存对账
+├── zeroai-domain-goods           商品、SKU、类目、搜索与 ES 同步
+├── zeroai-domain-cart            购物车读写与选中商品聚合
+├── zeroai-domain-promotion       优惠券、营销位与 Diamond 策略实现
+├── zeroai-payment-channel        微信、支付宝、易支付的支付 / 退款适配
+├── zeroai-data
+│   ├── zeroai-data-redis         Redis 访问与缓存工具
+│   └── zeroai-data-elastic       Elasticsearch 访问能力
+├── zeroai-message
+│   ├── zeroai-message-core       RabbitMQ 队列、交换机、绑定配置
+│   └── zeroai-message-consumer   MQ 消费者（订单落库、超时关单）
+├── zeroai-util                   通用工具、异常、枚举、常量
+├── web                           前端源码
+│   ├── zeroai-mobile             H5 商城（Vue 3 + Vite + Vant），含 AI 导购页
+│   └── zeroai-admin              运营后台（Vue 3 + Vite + Element Plus）
+├── db-init                       数据库初始化与增量治理 SQL
+├── scripts/dev                   开发辅助脚本（灌数、验证码、占位图）
+├── scripts/agent                 Agent 评测集与基线脚本
+├── docs                          方案、SOP、迁移手册、阶段记录
+└── docker-compose*.yml           本地或服务器编排脚本
+```
+
+### `zeroai-ai-starter` 内部结构
+
+```text
+zeroai-ai-starter/src/main/
+├── java/com/zeroai/ai/
+│   ├── config/          配置项与自动装配（AiAgent / AiHistory）
+│   ├── agent/           Agent 通道编排：建 Harness、事件映射、并发保护
+│   ├── harness/         工具面策略、可观测中间件、Harness 能力开关
+│   ├── mall/tool/       7 个商城工具（6 只读 + 1 提议）
+│   ├── mall/proposal/   下单提议：快照、幂等、确认、状态机
+│   ├── mall/port/       业务查询 SPI（搜索等，由接入方实现）
+│   ├── memory/          跨会话记忆与写入安全校验
+│   ├── history/         对话历史 SPI：存档 / 查询 / 清空
+│   ├── prompt/          外置 Prompt 加载
+│   └── web/             SSE 端点、事件常量、历史接口、用户上下文 SPI
+└── resources/
+    ├── prompts/         mall-agent-system.st（商城 Agent）/ guide-system.st（通用问答）
+    └── META-INF/spring/ 自动装配清单
+```
+
+---
+
+## 7. 架构分层
 
 ```text
 Controller 入口层
@@ -251,34 +417,38 @@ Service / Support 编排层
   -> 本地消息表、MQ relay、消费者模板、补偿重试
 
 治理层
-  -> Redis 削峰、库存对账、支付对账、补偿后台、Spring Scheduled 定时任务
+  -> Redis 削峰、库存对账、支付对账、补偿后台、定时任务
 ```
 
-入口模块不承载核心业务逻辑。`admin-api` 与 `mobile-api` 只做接口适配；交易、库存、商品、购物车、营销实现分别收敛在 `zeroai-domain-*`；`zeroai-domain-api` 只放跨领域契约。
+入口模块不承载核心业务逻辑；`admin-api` 与 `mobile-api` 只做接口适配，交易、库存、商品、购物车、营销分别收敛在 `zeroai-domain-*`。
 
-**AI 层的位置**：与上面五层正交——横向旁挂在入口侧，只通过「业务工具」向下调用领域服务，不参与事务边界，也不直接写库。
+**AI 层与上面五层正交**——横向旁挂在入口侧，只通过工具向下调用领域服务，不参与事务边界，也不直接写业务库（唯一写入的是一张独立的提议表）。
 
-## 7. 核心业务能力
+---
 
-### 7.1 移动端鉴权（Sa-Token）
+## 8. 核心交易能力
 
-`zeroai-mobile-api` 使用 Sa-Token，后台 `zeroai-admin-api` 保留 Spring Security + JWT，避免影响后台已有的 `@PreAuthorize` 权限体系。
+| 能力 | 关键实现 |
+|---|---|
+| **移动端鉴权** | Sa-Token，登录态与用户快照写 Redis Session，兼容 `Authorization: <token>` 与 `Bearer` 两种写法 |
+| **商品与购物车** | 详情聚合查询 + Redis 缓存；写商品、改库存、变销量后主动删详情缓存；购物车聚合 SKU / 优惠券 / 价格后返回 VO |
+| **订单链路** | Redis Lua 预占 → MySQL 条件冻结 → 写订单与明细 → 写本地消息 → MQ 异步后置；状态流转统一由 `OrderStateTransitionSupport` 校验 |
+| **秒杀链路** | 漏斗过滤 + Redis 原子扣减 + 本地消息可靠投递 + MQ 异步落单 + 60 秒延迟关单 |
+| **库存一致性** | `number / lockedStock` 双字段；Redis 只做入口闸门，MySQL 条件更新保最终一致；流水 `flowKey` 唯一保证重试幂等 |
+| **支付与对账** | 微信 / 支付宝 / 易支付；验签通过才进业务，第三方流水唯一约束，重复回调幂等返回 |
+| **本地消息** | 业务事务内写 `local_message` → Relay 扫描 → 投递成功标记 SENT → 失败指数退避 → 超次数进 FAILED 待人工重投 |
+| **定时任务** | 库存快照刷新（5min）、库存对账（1h）、支付日终对账（02:00），运行在 `admin-api` |
+| **后台统计** | `/shop/dashboard`：核心指标、销售趋势、支付渠道、热销商品、库存预警、会员趋势 |
 
-- 登录返回 token 字符串，前端仍用 `Authorization` 请求头。
-- 兼容 `Authorization: <token>` 与 `Authorization: Bearer <token>`。
-- 登录态与用户快照写入 Redis Session，业务代码通过 `MobileSecurityUtils` 取当前用户。
-- 未登录 / 鉴权失败由 `MobileSaTokenExceptionHandler` 统一返回业务错误码。
+<details>
+<summary><b>订单状态与库存流转（点开看细节）</b></summary>
 
-> **Sa-Token 1.46 的坑**：Session 里的业务对象必须登记 JSON 类型白名单（`implements SaJsonType` 或 `META-INF/satoken/sa-json-type.list`），否则登录会莫名报 403「认证失败」，真实原因只在 `handleSaTokenException` 日志里。
-
-### 7.2 商品与购物车
-
-- 后台维护商品、SKU、规格、属性、类目、库存。
-- 移动端商品详情走聚合查询 + Redis 缓存。
-- 商品写入、库存变更、虚拟销量变更后主动删商品详情缓存，避免展示旧库存。
-- 购物车聚合商品、SKU、优惠券和价格，返回明确 VO，不暴露数据库实体。
-
-### 7.3 订单链路
+```text
+下单冻结：number - n，lockedStock + n
+支付确认：lockedStock - n
+超时取消：number + n，lockedStock - n
+退款回补：number + n
+```
 
 ```text
 用户下单
@@ -290,89 +460,27 @@ Service / Support 编排层
 -> MQ / 本地处理器异步执行后置动作
 ```
 
-订单状态统一由 `OrderStateTransitionSupport` 管理，支付、取消、发货、退款、确认收货都必须校验状态流转，并通过「带当前状态的条件更新」避免并发覆盖。
-
 > `/order/submit` 是**异步**的：只投消息就返回 orderSn。**必须同时启动 `zeroai-message-consumer`**，否则订单表永远是 0 条。
 
-### 7.4 秒杀链路
+</details>
 
-「漏斗过滤 + Redis 原子扣减 + 本地消息可靠投递 + MQ 异步落单 + 60 秒延迟关单」。订单统一落到 `shop_order` / `shop_order_goods`，秒杀活动信息通过 `shop_order_activity_relation` 按订单商品粒度关联，不维护独立秒杀订单表。
+---
 
-```text
-活动发布和库存预热
--> 领取短期秒杀 token
--> SKU 级 + 用户级限流
--> Redis Lua 校验 token / 重复购买 / 活动库存
--> 写本地消息表，可靠投递秒杀下单 MQ
--> 消费者异步创建统一订单
--> 发送 60 秒延迟消息
--> 未支付自动关单并释放普通库存 + 活动冻结库存
--> 支付成功确认普通冻结库存 + 活动冻结库存
-```
+## 9. 快速开始
 
-### 7.5 库存一致性
-
-```text
-number       可售库存
-lockedStock  冻结库存
-
-下单冻结：number - n，lockedStock + n
-支付确认：lockedStock - n
-超时取消：number + n，lockedStock - n
-退款回补：number + n
-```
-
-- Redis Lua 只做入口削峰和热点 SKU 并发闸门。
-- MySQL 条件更新负责最终一致性，避免超卖。
-- 库存流水用唯一 `flowKey` 保证本地消息重试下的幂等。
-- `InventoryReconciliationService` 可从流水反推冻结库存并修复差异。
-
-### 7.6 支付与对账
-
-回调支持微信、支付宝、易支付。原则：验签通过才进业务；订单状态更新必须带当前状态条件；第三方流水用 `shop_payment_flow.flow_key` 唯一约束；重复回调按幂等成功返回；支付成功后的库存确认、虚拟销量走本地消息异步处理。
-
-### 7.7 本地消息与补偿
-
-```text
-业务事务内写业务数据 + local_message
--> Relay 扫描 INIT 消息
--> 投递 RabbitMQ 或执行本地处理器
--> 成功标记 SENT
--> 失败指数退避重试，超次数进 FAILED
--> 后台人工重投或定时补偿
-```
-
-### 7.8 定时任务
-
-运行在 `zeroai-admin-api` 进程内（`TradeGovernanceScheduledTask`）：
-
-```text
-refreshStockSnapshot      刷新 Redis 库存快照，支持热点 SKU 分桶（默认 5 分钟）
-reconcileInventory        库存流水对账，可受控修复 lockedStock（默认每小时）
-reconcilePaymentDaily     支付日终对账（默认 02:00）
-```
-
-周期与开关通过 `zeroai.schedule.trade.*` 调整，详见 `application.yml`。
-
-### 7.9 后台首页统计
-
-`DashboardController` 挂在 `/shop/dashboard`，覆盖核心指标、销售趋势、支付渠道、热销商品、库存预警、会员趋势与最近动态。口径集中在 `DashboardService`，前端只负责展示。
-
-## 8. 快速开始
-
-### 8.1 环境要求
+### 9.1 环境要求
 
 | 组件 | 版本 | 备注 |
 |---|---|---|
 | JDK | **21** | 产物 target 21，不能回退到 17 |
 | Maven | **≥ 3.6.3** | 低于此版本无法执行 `maven-compiler-plugin 3.15.0` |
 | MySQL | 8.0+ | 首次启动自动执行 `db-init/*.sql` |
-| Redis | 6+ | 本机用 Memurai 或原生 Redis 均可 |
+| Redis | 6+ | Memurai 或原生 Redis 均可 |
 | RabbitMQ | 3.12+ | 需要延迟消息插件 |
 | Elasticsearch | 7.14 | 需要 ik + pinyin 插件 |
 | Node.js | ≥ 20.19（后台）/ ≥ 18（H5） | 只有要看界面时才需要 |
 
-### 8.2 启动中间件
+### 9.2 启动中间件
 
 ```bash
 # Docker Desktop 必须叠加 override 文件，否则 host 网络不转发端口
@@ -380,84 +488,75 @@ docker compose -f docker-compose-es7-rabbitmq-redis-mysql.yml \
                -f docker-compose.docker-desktop.yml up -d mysql elasticsearch rabbitmq
 ```
 
-> **Redis 别用 compose 里的那个**：如果本机已装 Memurai / Redis（6379），容器会端口冲突，直接复用本机实例。
->
-> **首次初始化注意**：`db-init/*.sql` 按**字母序**执行，`seckill.sql` 依赖主库表，会先于主库跑而失败（`ERROR 1146`），导致 entrypoint 退出、主库一条都没导入。临时做法：先把依赖主库的 5 个脚本（`inventory_stock` / `local_message` / `order_status_log` / `payment_flow` / `seckill`）移出目录，只留主库脚本启动，起来后按 `local_message → order_status_log → payment_flow → inventory_stock → seckill` 顺序补导。
+> **Redis 别用 compose 里的那个**：本机已装 Memurai / Redis（6379）会端口冲突，直接复用本机实例。
 
-### 8.3 构建
+<details>
+<summary><b>首次初始化踩坑：db-init 字母序执行会失败（点开看解法）</b></summary>
+
+`db-init/*.sql` 按**字母序**执行，`seckill.sql` 依赖主库表，会先于主库跑而失败（`ERROR 1146`），
+导致 entrypoint 退出、主库一条都没导入。
+
+做法：先把依赖主库的 5 个脚本（`inventory_stock` / `local_message` / `order_status_log` / `payment_flow` / `seckill`）
+移出目录，只留主库脚本启动，起来后按
+`local_message → order_status_log → payment_flow → inventory_stock → seckill` 顺序补导。
+
+根治方案：给脚本加数字前缀（见 SOP D12）。
+
+</details>
+
+### 9.3 构建
 
 ```bash
-# 本机实测可用的组合（Windows Git Bash）
-export JAVA_HOME=/c/Users/13153/.jdks/ms-21.0.12
-~/.workbuddy/tools/apache-maven-3.9.9/bin/mvn -B clean package -DskipTests
+export JAVA_HOME=/path/to/jdk21
+mvn -B clean package -DskipTests
 
 # 只构建单个入口及其依赖
 mvn -B -pl zeroai-mobile-api -am clean package -DskipTests
 mvn -B -pl zeroai-admin-api -am clean package -DskipTests
 mvn -B -pl zeroai-message/zeroai-message-consumer -am clean package -DskipTests
-```
 
-跑测试（全量 213 个单测）：
-
-```bash
+# 跑单测
 mvn -B test
 ```
 
 > Windows 下重新打包前先停掉正在运行的 java 进程，否则 `spring-boot:repackage` 会因 jar 被占用失败。
 
-### 8.4 启动应用（三个进程）
+### 9.4 启动应用
 
 ```bash
-cd zeroai-mall
-unset SERVER__PORT SERVER__HOST     # 某些宿主环境会注入 SERVER__PORT，覆盖 server.port
+unset SERVER__PORT SERVER__HOST      # 某些宿主环境会注入 SERVER__PORT，覆盖 server.port
 
-# ① H5 入口（82）
-java -jar jars/zeroai-mobile-api.jar
-
-# ② 后台入口（81）
-java -jar jars/zeroai-admin-api.jar
-
-# ③ 消息消费者（订单落库、超时关单，无端口）
-java -jar jars/zeroai-message-consumer.jar
+java -jar jars/zeroai-mobile-api.jar               # ① H5 入口（82）
+java -jar jars/zeroai-admin-api.jar                # ② 后台入口（81）
+java -jar jars/zeroai-message-consumer.jar         # ③ 消息消费者（订单落库、超时关单）
 ```
 
-也可以直接用 IDE 启动对应的 `*Application`。**注意**：从 Boot 4 起 ES 密码已在 compose 侧纠正为 `123456`，**启动不需要任何 `-D` 参数**；如果还看到 401，见 [`docs/P0_SMOKE_CHECKLIST.md`](./docs/P0_SMOKE_CHECKLIST.md) 坑 8。
-
-### 8.5 首次启动必做的三件事
+### 9.5 首次启动必做的三件事
 
 这三步不做，页面能开但数据是空的、图全是碎图。
 
-**① 生成图片素材（约 8700 张）**
-
-商品图、分类图标、banner、详情长图都走 `/upload/**` 静态映射，指向 `zeroai.uploadDir`（默认 `E:\zeroai-mall\webp`，可用 `UPLOAD_DIR` 覆盖）。**这些图片不在仓库里**（原始素材在作者私有 OSS，公开演示站已下线，git 历史也从未提交过 upload 目录）。
-
 ```bash
-python scripts/dev/gen-placeholder-images.py            # 生成到默认目录
-python scripts/dev/gen-placeholder-images.py --out D:/zeroai-mall/webp --jobs 8
-python scripts/dev/gen-placeholder-images.py --dry-run  # 只看统计
-```
+# ① 生成占位图素材（约 8700 张，2 分钟）
+python scripts/dev/gen-placeholder-images.py
 
-脚本从数据库读出全部被引用的文件名，按用途定尺寸（商品 800²、banner 750×360、金刚位 160²…），按文件名 hash 取色相，把商品名画在图上。15 进程约 2 分钟，输出 8763 张 / 约 110 MB。依赖 Pillow（需 webp 支持）与 numpy，数据库连接可用 `ZEROAI_DB_*` 环境变量覆盖。
-
-![占位图效果](docs/images/upload-placeholder-preview.png)
-
-**② 建 ES 索引并灌商品数据**
-
-商品索引只在 admin 后台触发导入，本地只跑 mobile 时搜索会直接抛 `index_not_found_exception`。
-
-```bash
+# ② 建 ES 索引并灌商品数据（否则搜索直接抛 index_not_found_exception）
 python scripts/dev/seed-es-goods.py
-```
 
-**③ 写入登录验证码（免短信）**
-
-```bash
+# ③ 写入登录验证码（本地免短信）
 python scripts/dev/set-login-code.py --mobile 13800000000 --code 1234
 ```
 
-> 验证码必须写成 JSON 字符串 `"1234"`：`RedisTemplate` 的序列化器是 `GenericFastJsonRedisSerializer`，写裸 `1` 会被反序列化成 Integer，`Objects.equals("1", value)` 永远 false。
+> 商品图、分类图标、banner、详情长图都走 `/upload/**` 静态映射，指向 `zeroai.uploadDir`（默认 `E:\zeroai-mall\webp`，可用 `UPLOAD_DIR` 覆盖）。
+> 脚本从库里读出被引用的文件名，按用途定尺寸、按文件名 hash 取色相，把商品名画在图上——生成的是纯占位图，不是真实商品图。
 
-### 8.6 验证
+<details>
+<summary><b>占位图效果</b></summary>
+
+![占位图效果](docs/images/upload-placeholder-preview.png)
+
+</details>
+
+### 9.6 验证
 
 ```bash
 # 登录
@@ -473,74 +572,67 @@ curl -s -G "http://localhost:82/search/result" --data-urlencode "keyword=手机"
 # 带 token 的业务接口
 curl -s "http://localhost:82/cart/goodsCount" -H "Authorization: ${TOKEN}"
 
-# AI 流式（需先开启 AI，见 8.7；/ai/** 不在匿名白名单内，必须带 token）
-curl -N "http://localhost:82/ai/chat?q=你好" -H "Authorization: ${TOKEN}"
+# AI 流式（需先开启 AI，见 2.8）
+curl -N "http://localhost:82/ai/chat?q=帮我找3000元以内的手机" -H "Authorization: ${TOKEN}"
+
+# AI 对话历史
+curl -s "http://localhost:82/ai/history?limit=20" -H "Authorization: ${TOKEN}"
 ```
 
-> **`/ai/**` 不做匿名放行**：`MobileSaTokenConfiguration` 的白名单里没有 `/ai/**`，AI 端点必须登录后才能访问。这是刻意设计——工具级越权防护依赖真实用户身份，匿名调用拿不到 userId 就无法校验数据归属。
+<details>
+<summary><b>为什么 /ai/** 不做匿名放行</b></summary>
 
-### 8.7 开启 AI 能力
+`MobileSaTokenConfiguration` 的白名单里没有 `/ai/**`。这是刻意设计——工具级越权防护依赖真实用户身份，
+匿名调用拿不到 userId 就无法校验数据归属，「查我的订单」会直接变成「查所有订单」。
 
-```bash
-export AI_ENABLED=true
-export AI_ENGINE=agentscope          # spring-ai（单轮问答） / agentscope（带工具）
-export LLM_BASE_URL=https://api.deepseek.com
-export LLM_API_KEY=sk-xxxxxxxxxxxxxxxx
-export LLM_MODEL=deepseek-chat
-export AI_ACTION_ENABLED=true        # 打开下单提议（Agent 只生成提议，用户确认后才下单）
-export AI_HISTORY_ENABLED=true       # 对话历史落 ES
-```
+另外判断端点是否注册时不能只看 HTTP 状态码：本项目 404 会被全局异常处理改写为
+`HTTP 200 + {"code":500}`，要与一个确定不存在的路径对比才看得出差别。
 
-然后重启 `zeroai-mobile-api`。未开启时 `/ai/chat` 端点**根本不会注册**（不是返回 404 语义上的「未实现」，而是完全不存在）。
+</details>
 
-> **环境变量必须能被识别**：Spring 的 relaxed binding 只认 `ZEROAI_AI_ENGINE` 这类带前缀的名字，
-> `.env` 里平铺写的 `AI_ENGINE` 必须在 `application.yml` 里显式映射一次
-> （`engine: ${AI_ENGINE:spring-ai}`）。这些映射已补齐，直接 `set -a; . ./.env; set +a` 即可。
-> 提议链路还需要先执行 `db-init/ai_action_proposal.sql` 建表。
+---
 
-> 判断端点是否注册时不能只看 HTTP 状态码：本项目 404 被全局异常处理改写为 `HTTP 200 + {"code":500}`，要与一个确定不存在的路径对比才看得出差别。
+## 10. 前后端联调
 
-## 9. 前后端联调
+前端源码在 `web/`。**后端启动不需要前端**：`src/main/resources` 下没有 `static/`，也不打包前端产物，用 `curl` / Postman 就能完成全部接口验收。
 
-前端源码在 `web/`（两个独立仓库的本地副本）。**后端启动不需要前端**：`src/main/resources` 下没有 `static/`，也不打包前端产物，后端不托管任何页面，用 `curl` / Postman 就能完成全部接口验收。
-
-| 用途 | 仓库 | 技术栈 | 开发端口 | 代理目标 |
+| 用途 | 目录 | 技术栈 | 开发端口 | 代理目标 |
 |---|---|---|---|---|
 | H5 商城 | `web/zeroai-mobile` | Vue 3 + Vite + Vant 4 | **4949**（`/mall/#/`） | `/dev-api` → 82 |
 | 运营后台 | `web/zeroai-admin` | Vue 3 + Vite + Element Plus | **9530** | `/dev-api` → 81 |
 
 ```bash
-cd web/zeroai-mobile && npm install && npm run dev    # http://localhost:4949/mall/#/
-cd web/zeroai-admin  && npm install --legacy-peer-deps --no-audit && npm run dev   # http://localhost:9530
+cd web/zeroai-mobile && npm install && npm run dev                                   # http://localhost:4949/mall/#/
+cd web/zeroai-admin  && npm install --legacy-peer-deps --no-audit && npm run dev     # http://localhost:9530
 ```
 
-- 后台端口是 **9530**（`package.json` 里写死的），不是老文档里的 9528。
+- 后台端口是 **9530**（`package.json` 里写死的）。
 - H5 登录前先跑 `set-login-code.py`；后台用 `admin / 123456`（需图形验证码）。
 - 后台 `npm install` 若报 `Cannot read properties of null (reading 'edgesOut')`（npm 10 已知 bug），加 `--legacy-peer-deps`。
-- 想看后台页面就必须额外启动 `zeroai-admin-api`（81），P0 冒烟那条链路只覆盖了 82。
+- 想看后台页面就必须额外启动 `zeroai-admin-api`（81）。
 
-### 9.1 H5 端 AI 导购入口
+### 10.1 H5 的 AI 导购入口
 
-H5 已内置 AI 对话页，主页面（首页 / 分类 / 购物车 / 我的）右下角有「AI 导购」浮动入口，
-点击进入 `http://localhost:4949/mall/#/ai`。
+首页 / 分类 / 购物车 / 我的，右下角都有「AI 导购」浮动入口，点击进入 `http://localhost:4949/mall/#/ai`。
 
 | 关注点 | 实现 |
 |---|---|
-| 页面 | `web/zeroai-mobile/src/views/ai/index.vue`，路由 `AiAssistant`（`/ai`） |
-| 入口 | `web/zeroai-mobile/src/components/AiEntry/index.vue`，由 `App.vue` 在 `meta.showTab` 页渲染 |
-| 接口 | `src/api/ai.js` 的 `streamAgentChat()`，走 `GET /ai/chat?q=`；`fetchAiHistory()` / `clearAiHistory()` / `confirmOrderProposal()` |
-| 鉴权 | `/ai/**` 不在匿名白名单，未登录访问 `#/ai` 会被路由守卫重定向到登录页 |
-| 流式 | 不用 `EventSource`（无法自定义请求头），改用 `fetch` + `ReadableStream` 手动解析 SSE，带上 `Authorization` |
-| 渲染 | `thinking` / `tool_result` 渲染为工具过程态，`message_delta` 累加为打字机文本，`confirm_action` 渲染为提议卡片，`error` 显示为红色提示 |
-| 历史 | 进页 `GET /ai/history?limit=20` 还原气泡；「清空」会同时删除服务端 ES 记录 |
-| 下单 | 提议卡片上的「确认下单」调 `POST /ai/action/confirm/{proposalNo}`，这是唯一会创建订单的入口 |
+| 页面 | `src/views/ai/index.vue`，路由 `AiAssistant`（`/ai`，必须声明在兜底路由之前） |
+| 入口 | `src/components/AiEntry/index.vue`，由 `App.vue` 在 `meta.showTab` 页渲染 |
+| 接口 | `src/api/ai.js`：`streamAgentChat()` / `fetchAiHistory()` / `clearAiHistory()` / `confirmOrderProposal()` |
+| 鉴权 | 未登录访问 `#/ai` 被路由守卫重定向到登录页 |
+| 流式 | `fetch` + `ReadableStream` 手动解析 SSE，带 `Authorization` |
+| 渲染 | `thinking` / `tool_result` → 工具过程态；`message_delta` → 打字机；`confirm_action` → 提议卡片 |
+| 下单 | 卡片上的「确认下单」调 `POST /ai/action/confirm/{proposalNo}`，**这是唯一会创建订单的入口** |
 
 > 该页依赖后端 `AI_ENABLED=true` 且 `AI_ENGINE=agentscope`。
 > 未开启 AI 时整页仍可打开，但发送消息会收到明确的错误提示，不会白屏。
 
-## 10. 冒烟基线
+---
 
-改造前后逐条对照，完整实测输出见 [`docs/P0_SMOKE_CHECKLIST.md`](./docs/P0_SMOKE_CHECKLIST.md)（含 9 个坑）。
+## 11. 质量基线
+
+改造前后逐条对照，完整实测输出见 [`docs/P0_SMOKE_CHECKLIST.md`](./docs/P0_SMOKE_CHECKLIST.md)（含 9 个环境坑）。
 
 | # | 检查项 | 期望 | 基线值 |
 |---|---|---|---|
@@ -549,25 +641,34 @@ H5 已内置 AI 对话页，主页面（首页 / 分类 / 购物车 / 我的）�
 | 3 | 搜索（ES） | 200，返回商品 | 230 条入索引 |
 | 4 | 商品详情 | 200，含规格与库存 | goodsId=1030003 |
 | 5 | 加购 | 200，购物车可见 | — |
-| 6 | 下单 | 200 + orderSn | `1792853543000001`（P4 幂等对照基线） |
-| 7 | 后台登录 | 200 + JWT | `admin/123456`，Security 7 NPE 已修 |
+| 6 | 下单 | 200 + orderSn | `1792853543000001`（幂等对照基线） |
+| 7 | 后台登录 | 200 + JWT | `admin/123456` |
+| 8 | AI 流式 | 200 + SSE 事件序列 | `message_delta` ≥ 1 + `done` |
+| 9 | 下单提议 | `confirm_action` + 落表 PENDING | 确认后状态变 CONFIRMED |
 
-**每次改动交易链路或框架版本，这 7 条必须全过**——单测和编译全绿但启动即崩的情况，本项目踩过三次（Lettuce、Netty、Sa-Token 白名单）。
+**每次改动交易链路或框架版本，前 7 条必须全过**——单测和编译全绿但启动即崩的情况，本项目踩过三次（Lettuce、Netty、Sa-Token 白名单）。
 
-## 11. 文档地图
+---
+
+## 12. 文档地图
 
 | 文档 | 作用 | 什么时候读 |
 |---|---|---|
-| [`docs/AI-Agent接入实战方案.md`](./docs/AI-Agent接入实战方案.md) | **唯一技术基准**：方案、选型、代码骨架、迁移实录 | 动手前通读 |
-| [`docs/AGENT_INTEGRATION_SOP.md`](./docs/AGENT_INTEGRATION_SOP.md) | 执行规程：14 项变量表、8 条铁律、P0–P8 阶段与门禁、偏差登记 | 按阶段执行时对照 |
-| [`docs/BOOT4_MIGRATION_NOTES.md`](./docs/BOOT4_MIGRATION_NOTES.md) | Boot 4 迁移手册：包路径对照、Jackson 3、Security 7、启动期坑 | 升级或排错时查 |
-| [`docs/P0_SMOKE_CHECKLIST.md`](./docs/P0_SMOKE_CHECKLIST.md) | 冒烟清单 + 9 个环境坑的实测记录 | 换环境 / 回归 |
+| [`docs/AI-Agent接入实战方案.md`](./docs/AI-Agent接入实战方案.md) | **技术基准**：方案、选型、代码骨架、迁移实录 | 动手前通读 |
+| [`docs/AGENT_INTEGRATION_SOP.md`](./docs/AGENT_INTEGRATION_SOP.md) | 执行规程：变量表、8 条铁律、阶段门禁、偏差登记 | 按阶段执行时对照 |
+| [`docs/agent/PRACTICE-GUIDE.md`](./docs/agent/PRACTICE-GUIDE.md) | 实践手册：拿自己的业务流程走一遍 P0→P6 | 想复用这套方法时 |
+| [`docs/agent/`](./docs/agent/) | 各阶段实测记录：工具、事件流、Harness、HITL、提示词约束、历史落库 | 想知道「为什么这么设计」 |
+| [`docs/agent/BASELINE-METRICS.md`](./docs/agent/BASELINE-METRICS.md) | Agent 度量基线：token、步数、首字延迟、拒答率 | 优化前后对比 |
+| [`docs/BOOT4_MIGRATION_NOTES.md`](./docs/BOOT4_MIGRATION_NOTES.md) | Boot 4 迁移手册：包路径、Jackson 3、Security 7、启动期坑 | 升级或排错时查 |
+| [`docs/P0_SMOKE_CHECKLIST.md`](./docs/P0_SMOKE_CHECKLIST.md) | 冒烟清单 + 9 个环境坑实测记录 | 换环境 / 回归 |
 | [`docs/MODULE_REFACTOR_PLAN.md`](./docs/MODULE_REFACTOR_PLAN.md) | 模块拆分方案 | 改模块边界时 |
 | [`ONBOARDING.md`](./ONBOARDING.md) | 业务链路详解：秒杀、统计等 | 接业务需求时 |
 
-> `docs/AI_GUIDE_AGENT_DESIGN.md` 是历史遗留内容，**已废弃**，不要作为依据。文档间冲突时的裁决顺序：实战方案 > SOP > 本 README。
+> 文档冲突时的裁决顺序：实战方案 > SOP > 本 README。`docs/AI_GUIDE_AGENT_DESIGN.md` 已废弃，不要作为依据。
 
-## 12. 开发规范
+---
+
+## 13. 开发规范
 
 - 所有源码、XML、Markdown 使用 UTF-8。
 - Controller 只做参数校验、权限、日志和 VO 返回封装，不写核心业务逻辑。
@@ -575,21 +676,29 @@ H5 已内置 AI 对话页，主页面（首页 / 分类 / 购物车 / 我的）�
 - 交易、库存、支付、补偿、幂等逻辑必须补齐类注释、方法注释和关键分支注释。
 - 涉及 MyBatis-Plus Lambda Wrapper 的纯单测，需要初始化实体 `TableInfo` 缓存。
 - 默认不提交 `application*.yml` / `.env`；密钥只走环境变量。
-- `zeroai-ai-starter` **禁止**依赖任何业务模块（`zeroai-domain-*`、`zeroai-common`）；业务能力通过工具注册反向注入。
+- **`zeroai-ai-starter` 禁止依赖任何业务模块**（`zeroai-domain-*`、`zeroai-common`）；业务能力通过工具注册反向注入。
+- **AI 工具一律先只读**。要新增写能力，必须走「提议表 + 独立确认接口」，不允许给 Agent 直接的写工具。
 - 启动类所在包会被组件扫描，starter 里的 `@RestController` 必须**重复声明** `@ConditionalOnProperty`，否则会绕过开关直接注册。
+- 改 Prompt 等同于改行为：`prompts/*.st` 的改动要连带跑一遍评测集。
 
-## 13. 已知遗留项
+---
+
+## 14. 已知遗留项
 
 | 项 | 影响 | 建议 |
 |---|---|---|
-| 根 pom 钉 `tomcat.version=10.1.55`，Boot 4.1.2 BOM 为 11.0.27 | 潜在类加载不一致，冒烟未暴露 | 下次动版本删除覆盖，交回 BOM |
-| 根 pom 钉 `lombok.version=1.18.46`，BOM 为 1.18.48 | 同上 | 同上 |
-| `db-init/*.sql` 字母序执行问题 | 首次初始化需要手工分步导入 | 给脚本加数字前缀根治（SOP D12） |
-| `/upload/**` 素材非真实图片 | 只是占位图，视觉与真实商品无关 | 有素材后同名放进 `UPLOAD_DIR` 覆盖即可 |
-| P2–P8 未实现 | AI 目前只有流式对话，没有业务工具 | 按 SOP 逐阶段推进 |
+| 根 pom 钉 `tomcat.version=10.1.55`（BOM 为 11.0.27） | 潜在类加载不一致，冒烟未暴露 | 下次动版本时删除覆盖，交回 BOM |
+| 根 pom 钉 `lombok.version=1.18.46`（BOM 为 1.18.48） | 同上 | 同上 |
+| `db-init/*.sql` 字母序执行 | 首次初始化需手工分步导入 | 给脚本加数字前缀（SOP D12） |
+| `/upload/**` 为占位图 | 视觉与真实商品无关 | 有素材后同名放进 `UPLOAD_DIR` 覆盖 |
+| 首字延迟 / token / 步数偏高 | 体验与成本都有压力 | 见 [§3 正在迭代](#3-正在迭代) |
+| 无物流查询工具 | 问物流只能答「查不到」 | 接快递 API 作为第 8 个只读工具 |
+| 清空历史不清 session | 模型仍记得上一轮上下文 | 历史清空时同步重置 AgentScope 会话 |
 
-## 14. 许可与致谢
+---
+
+## 15. 许可
 
 - 本项目遵循仓库根目录的 [`LICENSE`](./LICENSE)，版权与许可声明以该文件为准。
-- 前端 `web/zeroai-mobile` / `web/zeroai-admin` 为独立仓库，各自带 `LICENSE`。
+- 前端 `web/zeroai-mobile` / `web/zeroai-admin` 各自带 `LICENSE`。
 - 商品图片素材未随仓库提供，`scripts/dev/gen-placeholder-images.py` 生成的是纯占位图。
