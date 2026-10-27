@@ -4,6 +4,7 @@ import com.zeroai.ai.config.AiAgentProperties;
 import com.zeroai.ai.harness.AiObservabilityMiddleware;
 import com.zeroai.ai.harness.HarnessProperties;
 import com.zeroai.ai.harness.ToolSurfacePolicy;
+import com.zeroai.ai.knowledge.KnowledgeService;
 import com.zeroai.ai.mall.port.MallSearchPort;
 import com.zeroai.ai.mall.proposal.ActionProposalProperties;
 import com.zeroai.ai.mall.proposal.ActionProposalService;
@@ -13,6 +14,7 @@ import com.zeroai.ai.mall.tool.ListMyAddressesTool;
 import com.zeroai.ai.mall.tool.ListMyCartTool;
 import com.zeroai.ai.mall.tool.MyOrdersTool;
 import com.zeroai.ai.mall.tool.ProposeOrderTool;
+import com.zeroai.ai.mall.tool.SearchKnowledgeTool;
 import com.zeroai.ai.mall.tool.SearchProductsTool;
 import com.zeroai.ai.mall.tool.StockStatusTool;
 import com.zeroai.ai.prompt.PromptLoader;
@@ -74,6 +76,11 @@ public class MallAgentFactory {
      */
     private final ActionProposalService actionProposalService;
     private final ActionProposalProperties actionProperties;
+    /**
+     * 知识检索门面，知识库关闭时为空。
+     * 非空即注册 {@code search_knowledge}；它只带来「读规则」的能力，与写操作无关。
+     */
+    private final KnowledgeService knowledgeService;
     private final Model model;
     private final String systemPrompt;
     /**
@@ -93,6 +100,7 @@ public class MallAgentFactory {
      * @param cartService        购物车服务，仅用于只读查本人购物车
      * @param actionProposalService 提议服务，可为 null（写操作提议链路未启用）
      * @param actionProperties      提议配置，可为 null 时使用默认关闭值
+     * @param knowledgeService      知识检索门面，可为 null（知识库关闭时不注册检索工具）
      */
     public MallAgentFactory(AiAgentProperties properties,
                             HarnessProperties harness,
@@ -103,7 +111,8 @@ public class MallAgentFactory {
                             IAddressService addressService,
                             ICartService cartService,
                             ActionProposalService actionProposalService,
-                            ActionProposalProperties actionProperties) {
+                            ActionProposalProperties actionProperties,
+                            KnowledgeService knowledgeService) {
         if (!StringUtils.hasText(properties.getApiKey())) {
             throw new IllegalStateException(
                     "zeroai.ai.api-key 未配置：请通过环境变量 LLM_API_KEY 注入，禁止写入配置文件");
@@ -118,6 +127,7 @@ public class MallAgentFactory {
         this.cartService = cartService;
         this.actionProposalService = actionProposalService;
         this.actionProperties = actionProperties == null ? new ActionProposalProperties() : actionProperties;
+        this.knowledgeService = knowledgeService;
         this.model = buildModel(properties);
         this.systemPrompt = PromptLoader.load(properties.getAgentSystemPrompt());
         this.stateStore = new JsonFileAgentStateStore(Path.of(this.harness.getStateDir()));
@@ -341,10 +351,13 @@ public class MallAgentFactory {
      * 工具面分三层：
      * <ol>
      *   <li>全量只读查询：搜索、详情、库存；</li>
+     *   <li>规则知识检索：售后、配送、优惠券等公开政策（匿名也可用，只读）；</li>
      *   <li>登录用户专属只读：订单、地址、购物车；</li>
      *   <li>写操作提议（仅开启时）：{@code propose_order} 只生成待确认提议，
      *       不创建订单；真正的写入口在独立确认接口。</li>
      * </ol>
+     * 知识检索只增加「读政策」的能力，不会因为命中某段文本就获得任何写权限：
+     * 写能力是否注册只由 {@code zeroai.ai.action.enabled} 决定，与知识库无关。
      *
      * @param context          请求上下文，可为 null
      * @param proposalListener 提议生成回调，可为 null
@@ -355,6 +368,9 @@ public class MallAgentFactory {
         toolkit.registerTool(new SearchProductsTool(searchPort));
         toolkit.registerTool(new GoodsDetailTool(goodsDetailService));
         toolkit.registerTool(new StockStatusTool(goodsProductService));
+        if (knowledgeService != null) {
+            toolkit.registerTool(new SearchKnowledgeTool(knowledgeService));
+        }
         // 匿名用户不注册任何用户级工具：数据边界在对象层面就不存在
         if (context != null && context.userId() != null) {
             Long userId = context.userId();

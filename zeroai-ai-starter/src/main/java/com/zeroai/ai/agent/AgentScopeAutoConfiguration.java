@@ -3,6 +3,7 @@ package com.zeroai.ai.agent;
 import com.zeroai.ai.config.AiAgentProperties;
 import com.zeroai.ai.harness.HarnessProperties;
 import com.zeroai.ai.history.AiChatHistory;
+import com.zeroai.ai.knowledge.KnowledgeService;
 import com.zeroai.ai.mall.port.MallSearchPort;
 import com.zeroai.ai.mall.proposal.ActionProposalProperties;
 import com.zeroai.ai.mall.proposal.ActionProposalService;
@@ -57,6 +58,11 @@ public class AgentScopeAutoConfiguration {
      * @param goodsDetailService  商品详情服务
      * @param goodsProductService 商品货品服务（只读用途）
      * @param mobileOrderService  订单服务（只读用途）
+     * @param addressService      地址服务（只读用途）
+     * @param cartService         购物车服务（只读用途）
+     * @param actionProposalProvider 提议服务提供者，写操作提议关闭时为空
+     * @param actionProperties    提议配置
+     * @param knowledgeProvider   知识检索门面提供者，知识库关闭时为空
      * @return Agent 工厂
      */
     @Bean
@@ -70,13 +76,16 @@ public class AgentScopeAutoConfiguration {
                                              IAddressService addressService,
                                              ICartService cartService,
                                              ObjectProvider<ActionProposalService> actionProposalProvider,
-                                             ActionProposalProperties actionProperties) {
+                                             ActionProposalProperties actionProperties,
+                                             ObjectProvider<KnowledgeService> knowledgeProvider) {
+        KnowledgeService knowledgeService = knowledgeProvider.getIfAvailable();
         // 能力开关必须可见：默认全关，若有人误开需要能从启动日志一眼看出
         log.info("Agent 通道配置 engine=agentscope model={} skillsEnabled={} allowedSkills={} "
-                        + "memoryEnabled={} observabilityEnabled={} planModeEnabled={} actionEnabled={}",
+                        + "memoryEnabled={} observabilityEnabled={} planModeEnabled={} actionEnabled={} "
+                        + "knowledgeEnabled={}",
                 properties.getModel(), harness.isSkillsEnabled(), harness.getAllowedSkills(),
                 harness.isMemoryEnabled(), harness.isObservabilityEnabled(), harness.isPlanModeEnabled(),
-                actionProperties.isEnabled());
+                actionProperties.isEnabled(), knowledgeService != null);
         return new MallAgentFactory(properties,
                 harness,
                 searchPortProvider.getIfAvailable(),
@@ -86,7 +95,8 @@ public class AgentScopeAutoConfiguration {
                 addressService,
                 cartService,
                 actionProposalProvider.getIfAvailable(),
-                actionProperties);
+                actionProperties,
+                knowledgeService);
     }
 
     /**

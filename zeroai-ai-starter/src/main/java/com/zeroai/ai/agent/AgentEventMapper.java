@@ -37,6 +37,7 @@ public final class AgentEventMapper {
             "search_products", "正在检索商品",
             "get_product_detail", "正在查看商品详情",
             "get_stock_status", "正在确认库存",
+            "search_knowledge", "正在查商城规则",
             "list_my_orders", "正在查询你的订单",
             "list_my_addresses", "正在核对收货地址",
             "list_my_cart", "正在查看购物车",

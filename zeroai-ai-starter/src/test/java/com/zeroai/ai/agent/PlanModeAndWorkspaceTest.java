@@ -36,7 +36,7 @@ class PlanModeAndWorkspaceTest {
         harness.setMemoryEnabled(false);
 
         return new MallAgentFactory(properties, harness, null, null, null, null,
-                null, null, null, new com.zeroai.ai.mall.proposal.ActionProposalProperties());
+                null, null, null, new com.zeroai.ai.mall.proposal.ActionProposalProperties(), null);
     }
 
     @Test

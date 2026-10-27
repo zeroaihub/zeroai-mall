@@ -35,7 +35,7 @@ class AgentToolSurfaceTest {
         harness.setObservabilityEnabled(true);
 
         return new MallAgentFactory(properties, harness, null, null, null, null,
-                null, null, null, new com.zeroai.ai.mall.proposal.ActionProposalProperties())
+                null, null, null, new com.zeroai.ai.mall.proposal.ActionProposalProperties(), null)
                 .create(new MallAgentContext(1001L, "u1001"));
     }
 

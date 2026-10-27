@@ -97,4 +97,17 @@ zeroai:
       max-answer-chars: 8000
       default-page-size: 20
       max-page-size: 50
+    # 知识库（RAG）：政策/规则类文档随代码打包，启动时同步到 ES 的独立索引；
+    # 不引入向量库，商品实时数据也不复制进来
+    knowledge:
+      enabled: ${AI_KNOWLEDGE_ENABLED:true}
+      index: ${AI_KNOWLEDGE_INDEX:zeroai_ai_kb}
+      location: knowledge
+      sync-on-startup: ${AI_KNOWLEDGE_SYNC_ON_STARTUP:true}
+      max-hits: ${AI_KNOWLEDGE_MAX_HITS:3}
+      max-snippet-chars: 600
+      max-query-chars: 80
+      # 覆盖率要求与得分下限：检索调优参数，改这里不用改代码
+      min-should-match: ${AI_KNOWLEDGE_MIN_SHOULD_MATCH:2<70%}
+      min-score: ${AI_KNOWLEDGE_MIN_SCORE:1.5}
 

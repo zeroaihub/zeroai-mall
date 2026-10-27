@@ -188,6 +188,7 @@ const TOOL_DONE_TEXT = {
   search_products: '已检索商品',
   get_product_detail: '已获取商品详情',
   get_stock_status: '已确认库存',
+  search_knowledge: '已查商城规则',
   list_my_orders: '已查询订单',
   list_my_addresses: '已核对地址',
   list_my_cart: '已查看购物车',

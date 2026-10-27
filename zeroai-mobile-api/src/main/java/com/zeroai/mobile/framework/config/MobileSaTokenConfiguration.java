@@ -40,6 +40,9 @@ public class MobileSaTokenConfiguration implements WebMvcConfigurer {
             "/category/**",
             "/comment/**",
             "/search/**",
+            // 知识检索只返回公开政策文档（售后、配送、优惠券等），与商品搜索同属公开读接口；
+            // 需要登录的是 /ai/chat（会话）与 /ai/history（个人历史），不放行
+            "/ai/knowledge/**",
             "/goods/detail/**",
             "/cart/goodsCount",
             "/diamond/**",

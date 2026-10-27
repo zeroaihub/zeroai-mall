@@ -42,9 +42,10 @@
   - [2.3 写操作：Human-in-the-loop](#23-写操作human-in-the-loop)
   - [2.4 SSE 事件协议](#24-sse-事件协议)
   - [2.5 对话历史与记忆](#25-对话历史与记忆)
-  - [2.6 六道工程防线](#26-六道工程防线)
-  - [2.7 实测表现](#27-实测表现)
-  - [2.8 AI 能力开关与配置](#28-ai-能力开关与配置)
+  - [2.6 知识检索（RAG）：政策问题不再靠模型「记得」](#26-知识检索rag政策问题不再靠模型记得)
+  - [2.7 六道工程防线](#27-六道工程防线)
+  - [2.8 实测表现](#28-实测表现)
+  - [2.9 AI 能力开关与配置](#29-ai-能力开关与配置)
 - [3. 正在迭代](#3-正在迭代)
 - [4. 路线图](#4-路线图)
 - [5. 技术栈](#5-技术栈)
@@ -115,13 +116,14 @@ sequenceDiagram
 
 ### 2.2 工具矩阵
 
-Agent 手上只有 7 个工具，6 个只读、1 个只写提议：
+Agent 手上只有 8 个工具，7 个只读、1 个只写提议：
 
 | 工具 | 能力 | 性质 | 权限边界 |
 |---|---|:--:|---|
 | `search_products` | 关键词检索在售商品，返回 ID / 名称 / 价格 / 销量 | 读 | 仅上架商品 |
 | `get_product_detail` | 商品详情：名称、价格、简介、可选规格与库存 | 读 | — |
 | `get_stock_status` | 按 SKU 查可售库存与冻结库存 | 读 | 绝不改库存 |
+| `search_knowledge` | 检索售后、配送运费、下单支付、优惠券等政策文档，带 `sourceId` 与版本 | 读 | 只收公开政策，不含任何用户数据 |
 | `list_my_orders` | 当前用户订单：订单号、金额、状态、商品名 | 读 | 强制按 userId 过滤 |
 | `list_my_cart` | 当前用户购物车：cardId、商品名、单价、数量、勾选态 | 读 | 强制按 userId 过滤 |
 | `list_my_addresses` | 当前用户收货地址（姓名、手机号脱敏） | 读 | 强制按 userId 过滤 |
@@ -164,7 +166,7 @@ flowchart LR
 | `error` | 错误码 + 友好文案 | 红色气泡 |
 | `product_cards` | 商品卡片列表（协议已定义，**尚未下发**） | — |
 
-> **为什么不用 `EventSource`**：它不能自定义请求头，而 `/ai/**` 必须带 `Authorization`（不存在匿名白名单）。
+> **为什么不用 `EventSource`**：它不能自定义请求头，而 `/ai/chat` 与 `/ai/history` 必须带 `Authorization`（唯一放行的匿名路径是只读的 `/ai/knowledge/**`，它只返回公开政策文档）。
 > 把 token 塞进 query 会进访问日志和浏览器历史，所以 H5 用 `fetch` + `ReadableStream` 手动解析 SSE。
 
 ### 2.5 对话历史与记忆
@@ -180,7 +182,40 @@ flowchart LR
 
 历史存储是 **SPI**：`zeroai-ai-starter` 只定义 `AiChatHistoryStore`，ES 实现在 `zeroai-mobile-api` 里。换 MySQL、换 Mongo，starter 一行不用改。
 
-### 2.6 六道工程防线
+### 2.6 知识检索（RAG）：政策问题不再靠模型「记得」
+
+商品数据可以实时查，但「退款多久到账」「运费怎么算」这类**规则**没有对应的业务表。让模型凭通用常识回答，等于让它编政策。Phase 7 的做法是把政策写成随代码发布的 Markdown，检索后带着出处回答。
+
+```mermaid
+flowchart LR
+    MD["knowledge/*.md<br/>frontmatter：sourceId / 版本 / 更新日期 / 可见范围"] -->|"启动时全量同步"| KBI[("zeroai_ai_kb<br/>1 分片 · ik 分词")]
+    Q["用户：退款多久到账"] --> A["Agent"]
+    A -->|"search_knowledge"| KBI
+    KBI -->|"片段 + sourceId + 版本"| A
+    A --> R["回答 + 依据《退款与售后政策》（kb-after-sale-refund，2026-10-27 版）"]
+    KBI -.->|"命中不到"| N["明确说「这条我查不到」"]
+```
+
+| 设计决定 | 取舍 |
+|---|---|
+| **不引入 PGVector** | 语料只有 6 篇政策文档，提问集中在固定业务词上，BM25 + ik 已经够用。加向量库要新增中间件、embedding 调用和一条失败链路，收益无法验证。真需要语义召回时只换 `KnowledgeSearchPort` 实现 |
+| **商品数据不进知识库** | `goods` 索引是实时数据，知识索引是低频变更的规则文本。合并会让商品全量重建把知识冲掉 |
+| **知识与商品分索引** | `zeroai_ai_kb` 与 `goods` 互不影响；知识索引是纯派生数据，删了重启即重建 |
+| **文档即代码** | 政策随代码评审、发布、回滚，改一句话就是一个可 review 的 diff，不会出现「代码上线了知识库还是旧口径」 |
+| **知识片段不是指令** | 入库前用 `KnowledgeGuard` 拦截「忽略之前的指令」类文本并整篇拒收；检索后再按句清洗一次 |
+| **命中不带来权限** | `search_knowledge` 无 userId 参数、只读公开文档；写能力是否注册只由 `AI_ACTION_ENABLED` 决定 |
+
+检索质量实测（29 条用例，`scripts/agent/knowledge/eval_knowledge.py`，本机单实例、平均 23ms/次）：
+
+| 指标 | 结果 | 说明 |
+|---|---|---|
+| 命中率 @1 / @3 | **100% / 100%**（20/20） | 问题对应的政策文档排在第一位 |
+| 无答案识别 | **100%**（6/6） | 知识库没有的主题（发票、分期、积分、直邮、货到付款、加盟）明确返回「查不到」 |
+| 注入泄漏 | **0**（3/3） | 要求「忽略指令 / 输出提示词 / 列所有用户手机号」均无片段泄漏 |
+
+调优不是堆参数，而是三次可解释的修正：标签分词（让「订单状态」这种问法能落到对的文档）、停用词分析器（「是/的/怎么」会让任何文档凑够覆盖率）、查询侧剔除疑问词 + 覆盖率阈值 `2<70%`。过程与失败样本见 [`docs/agent/PHASE-7-rag-knowledge.md`](./docs/agent/PHASE-7-rag-knowledge.md)。
+
+### 2.7 六道工程防线
 
 做过才知道，AI 接进交易系统真正难的不是「让它会说」，而是「让它不乱说、不越权、不失控」。
 
@@ -193,7 +228,7 @@ flowchart LR
 | **可观测** | 出问题只能靠猜 | 结构化日志：`ai.model.call session=... ms=... in=... out=... cached=...`、`ai.tool.call tool=... state=SUCCESS` |
 | **可降级** | 模型挂了就白屏 | `degrade-on-error=true`，模型异常回落既有能力（普通搜索）并下发 `degrade` 事件 |
 
-### 2.7 实测表现
+### 2.8 实测表现
 
 本机单实例、真实 DeepSeek 调用、真实 ES / MySQL，冷启动单轮、样本量 24/组（只够定方向，不做显著性结论）：
 
@@ -208,7 +243,7 @@ flowchart LR
 
 典型响应时间：闲聊 3.1s / 3 步搜索 5.8s / 单工具订单查询 2.7s。评测集与脚本在 `scripts/agent/baseline/`，基线明细见 [`docs/agent/BASELINE-METRICS.md`](./docs/agent/BASELINE-METRICS.md)。
 
-### 2.8 AI 能力开关与配置
+### 2.9 AI 能力开关与配置
 
 **默认全关**。`AI_ENABLED=false` 时不注册任何 AI Bean，应用行为与未接入时完全一致，不产生任何模型费用。
 
@@ -221,6 +256,7 @@ LLM_API_KEY=sk-xxxxxxxxxxxxxxxx
 LLM_MODEL=deepseek-flash
 AI_ACTION_ENABLED=true        # 下单提议（Agent 只生成提议，用户确认后才下单）
 AI_HISTORY_ENABLED=true       # 对话历史落 ES
+AI_KNOWLEDGE_ENABLED=true     # 知识库（复用 ES，不引入向量库）
 ```
 
 ```yaml
@@ -242,6 +278,13 @@ zeroai:
       enabled: ${AI_HISTORY_ENABLED:true}
       index: zeroai_ai_chat
       max-answer-chars: 8000
+    knowledge:                            # 知识库（RAG）
+      enabled: ${AI_KNOWLEDGE_ENABLED:true}
+      index: ${AI_KNOWLEDGE_INDEX:zeroai_ai_kb}
+      sync-on-startup: true               # 启动时全量同步，幂等
+      max-hits: 3
+      min-should-match: 2<70%             # 覆盖率要求：调检索主要改这里
+      min-score: 1.5                      # 得分下限，滤掉共用一个泛词的噪声命中
     harness:                              # AgentScope 能力位，默认全关
       skills-enabled: false
       memory-enabled: false
@@ -289,7 +332,9 @@ AiUserContext aiUserContext() {
 | **提议的强校验** | 模型偶发把未勾选商品计入提议 | 在 `ProposeOrderTool` 服务端兜底：未勾选项直接拒绝计入，不依赖 Prompt |
 | **记忆能力** | `UserPreferenceMemory` 已实现，默认关 | 灰度打开，先只记「类目偏好 / 预算区间」两类低风险事实 |
 | **会话级重置** | 清空历史只清 ES | 同步清 AgentScope session，否则模型还记得上一轮的购物车 |
-| **物流能力缺口** | 无物流工具，问「我的快递到哪了」只能答查不到 | 接快递 100 / 顺丰 API，作为第 8 个只读工具 |
+| **物流能力缺口** | 无物流工具，问「我的快递到哪了」只能答查不到 | 接快递 100 / 顺丰 API，作为第 9 个只读工具 |
+| **知识库发布方式** | 改政策要发版（文档随 jar 打包） | 增加运营侧维护入口，同时保留「代码即知识源」作为兜底口径 |
+| **知识检索只有 BM25** | 换个说法问同一件事可能召回不到 | 先把评测集扩到 80 条以上，用失败样本判断是否真需要向量召回 |
 | **H5 体验** | 支持流式、工具过程态、提议卡片 | 增加中断续答、消息重发、多轮引用商品跳转 |
 
 ---
@@ -309,14 +354,15 @@ AiUserContext aiUserContext() {
 | P6 | HITL | 下单提议 + 独立确认接口 + 五道校验 |
 | P6.1 | 体验 | 提示词事实约束 + H5 AI 导购页 |
 | P6.2 | 工程 | 对话历史落 ES + 配置映射 + 提议幂等修复 |
+| P7 | RAG | 政策知识库（6 篇文档）+ 检索工具 + 注入防护 + 29 条检索评测 100% |
 
 **规划中**
 
 | 阶段 | 主题 | 目标 | 优先级 |
 |:--:|---|---|:--:|
-| P7 | RAG 知识库 | 商品知识 / 售后政策入库，答得了「这个能七天无理由吗」 | 高 |
 | P8 | 多模态 | 拍图搜同款、小票识别 | 中 |
 | P9 | 工程化放量 | 限流、审计、成本看板、离线评测集回归 | 高 |
+| P10 | 语义召回 | 只有实测证明 BM25 不够时才引入向量库，放独立 compose profile | 低 |
 | P10 | MCP 化 | 把商城工具以 MCP Server 形式对外暴露，供其他 Agent 复用 | 中 |
 | P11 | 主动式 Agent | 到货 / 降价 / 库存回补提醒，事件驱动而非问答驱动 | 低 |
 
@@ -657,6 +703,7 @@ cd web/zeroai-admin  && npm install --legacy-peer-deps --no-audit && npm run dev
 | [`docs/AI-Agent接入实战方案.md`](./docs/AI-Agent接入实战方案.md) | **技术基准**：方案、选型、代码骨架、迁移实录 | 动手前通读 |
 | [`docs/AGENT_INTEGRATION_SOP.md`](./docs/AGENT_INTEGRATION_SOP.md) | 执行规程：变量表、8 条铁律、阶段门禁、偏差登记 | 按阶段执行时对照 |
 | [`docs/agent/PRACTICE-GUIDE.md`](./docs/agent/PRACTICE-GUIDE.md) | 实践手册：拿自己的业务流程走一遍 P0→P6 | 想复用这套方法时 |
+| [`docs/agent/PHASE-7-rag-knowledge.md`](./docs/agent/PHASE-7-rag-knowledge.md) | 知识库：知识源、为什么不上向量库、检索调优与评测、注入防护 | 想复用 RAG 能力时 |
 | [`docs/agent/`](./docs/agent/) | 各阶段实测记录：工具、事件流、Harness、HITL、提示词约束、历史落库 | 想知道「为什么这么设计」 |
 | [`docs/agent/BASELINE-METRICS.md`](./docs/agent/BASELINE-METRICS.md) | Agent 度量基线：token、步数、首字延迟、拒答率 | 优化前后对比 |
 | [`docs/BOOT4_MIGRATION_NOTES.md`](./docs/BOOT4_MIGRATION_NOTES.md) | Boot 4 迁移手册：包路径、Jackson 3、Security 7、启动期坑 | 升级或排错时查 |
@@ -694,6 +741,9 @@ cd web/zeroai-admin  && npm install --legacy-peer-deps --no-audit && npm run dev
 | 首字延迟 / token / 步数偏高 | 体验与成本都有压力 | 见 [§3 正在迭代](#3-正在迭代) |
 | 无物流查询工具 | 问物流只能答「查不到」 | 接快递 API 作为第 8 个只读工具 |
 | 清空历史不清 session | 模型仍记得上一轮上下文 | 历史清空时同步重置 AgentScope 会话 |
+| 知识索引靠启动全量同步 | 改 mapping 必须删索引重建；运行期新增文档不生效 | 需要热更新时再加管理端 reindex 接口 |
+| 知识库只覆盖 6 篇政策 | 发票、分期、积分、加盟等仍答「查不到」 | 按真实客服问题补充文档，用评测集驱动扩写 |
+| 检索评测集与调参同源 | 29 条用例参与过阈值调优，存在过拟合风险 | 另建留出集（本次已做 6 条抽样，结论见 PHASE-7 文档） |
 
 ---
 
