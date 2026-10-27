@@ -45,7 +45,7 @@ class AgentChatHandlerTest {
 
     private final AiAgentProperties properties = new AiAgentProperties();
 
-    private final AgentChatHandler handler = new AgentChatHandler(agentFactory, properties);
+    private final AgentChatHandler handler = new AgentChatHandler(agentFactory, properties, null);
 
     private final CapturingEmitter emitter = new CapturingEmitter();
 

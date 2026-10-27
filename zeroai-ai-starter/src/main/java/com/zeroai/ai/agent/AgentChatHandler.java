@@ -1,6 +1,7 @@
 package com.zeroai.ai.agent;
 
 import com.zeroai.ai.config.AiAgentProperties;
+import com.zeroai.ai.history.AiChatHistory;
 import com.zeroai.ai.mall.proposal.vo.ProposalVO;
 import com.zeroai.ai.web.AiEvent;
 import com.zeroai.ai.web.AiEventType;
@@ -11,6 +12,7 @@ import io.agentscope.core.event.AgentResultEvent;
 import io.agentscope.core.event.ExceedMaxItersEvent;
 import io.agentscope.core.event.RequireExternalExecutionEvent;
 import io.agentscope.core.event.RequireUserConfirmEvent;
+import io.agentscope.core.event.ToolCallStartEvent;
 import io.agentscope.core.message.UserMessage;
 import io.agentscope.harness.agent.HarnessAgent;
 import org.slf4j.Logger;
@@ -50,6 +52,12 @@ public class AgentChatHandler {
     private final AiAgentProperties properties;
 
     /**
+     * 对话历史门面。可为 null（单测未装配历史时不记录），
+     * 内部已把「存储缺失 / 开关关闭 / 匿名」收敛为空操作，调用点无需判空。
+     */
+    private final AiChatHistory chatHistory;
+
+    /**
      * 在途会话集合。键由 userId 与 sessionId 共同构成，避免不同用户撞同名会话。
      */
     private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
@@ -57,10 +65,13 @@ public class AgentChatHandler {
     /**
      * @param agentFactory Agent 工厂，不可为 null
      * @param properties   AI 配置，用于读取会话与步数上限
+     * @param chatHistory  对话历史门面，可为 null
      */
-    public AgentChatHandler(MallAgentFactory agentFactory, AiAgentProperties properties) {
+    public AgentChatHandler(MallAgentFactory agentFactory, AiAgentProperties properties,
+                            AiChatHistory chatHistory) {
         this.agentFactory = agentFactory;
         this.properties = properties;
+        this.chatHistory = chatHistory;
     }
 
     /**
@@ -90,6 +101,11 @@ public class AgentChatHandler {
         AtomicBoolean truncated = new AtomicBoolean(false);
         AtomicReference<HarnessAgent> agentRef = new AtomicReference<>();
         AtomicReference<Disposable> subscriptionRef = new AtomicReference<>();
+
+        // 历史只存「完整的一轮」：中途断连不会走到 done/error，因此不会落库
+        AiChatHistory.Turn turn = chatHistory == null
+                ? null
+                : chatHistory.begin(userId, sessionId, question);
 
         // 断连优先于正常完成：先取消订阅，再中断 Agent，最后释放会话占位
         sink.onClose(() -> {
@@ -124,9 +140,9 @@ public class AgentChatHandler {
                 });
 
         subscriptionRef.set(events.subscribe(
-                event -> onEvent(sink, event, steps, textSeen, truncated),
-                error -> onError(sink, error, userId, sessionId),
-                () -> onComplete(sink, steps, truncated)));
+                event -> onEvent(sink, event, steps, textSeen, truncated, turn),
+                error -> onError(sink, error, userId, sessionId, steps, turn),
+                () -> onComplete(sink, steps, truncated, turn)));
     }
 
     /**
@@ -160,21 +176,27 @@ public class AgentChatHandler {
      * @param steps     工具调用步数计数器
      * @param textSeen  是否已下发过文本增量
      * @param truncated 是否因超出步数上限被截断
+     * @param turn      本轮历史记录器，可为 null
      */
     private void onEvent(SseSink sink,
                          AgentEvent event,
                          AtomicInteger steps,
                          AtomicBoolean textSeen,
-                         AtomicBoolean truncated) {
+                         AtomicBoolean truncated,
+                         AiChatHistory.Turn turn) {
         if (AgentEventMapper.isToolCall(event)) {
             steps.incrementAndGet();
+        }
+        // 历史里只登记工具名，不登记入参与结果：入参可能带地址/订单信息
+        if (turn != null && event instanceof ToolCallStartEvent toolStart) {
+            turn.tool(toolStart.getToolCallName());
         }
         if (event instanceof ExceedMaxItersEvent) {
             truncated.set(true);
             log.warn("Agent 达到最大步数上限 {}", properties.getMaxSteps());
             return;
         }
-        // 本模块只注册只读工具，不应出现需要用户确认或外部执行的请求；
+        // 本模块只注册只读工具（提议工具只写提议表），不应出现需要用户确认或外部执行的请求；
         // 一旦出现说明工具链被改坏，按错误上报而不是硬编码确认流程。
         if (event instanceof RequireUserConfirmEvent || event instanceof RequireExternalExecutionEvent) {
             log.error("Agent 出现未预期的写操作确认请求，工具注册可能被破坏");
@@ -188,6 +210,9 @@ public class AgentChatHandler {
             String text = resultEvent.getResult() == null ? null : resultEvent.getResult().getTextContent();
             if (text != null && !text.isBlank()) {
                 textSeen.set(true);
+                if (turn != null) {
+                    turn.delta(text);
+                }
                 sink.send(AiEvent.of(AiEventType.MESSAGE_DELTA, Map.of("delta", text)));
             }
             return;
@@ -195,6 +220,10 @@ public class AgentChatHandler {
         AgentEventMapper.map(event).ifPresent(mapped -> {
             if (AiEventType.MESSAGE_DELTA.equals(mapped.type())) {
                 textSeen.set(true);
+                if (turn != null && mapped.data() instanceof Map<?, ?> data
+                        && data.get("delta") instanceof String delta) {
+                    turn.delta(delta);
+                }
             }
             sink.send(mapped);
         });
@@ -207,10 +236,16 @@ public class AgentChatHandler {
      * @param error     异常
      * @param userId    用户 ID
      * @param sessionId 会话 ID
+     * @param steps     已发生的工具调用步数
+     * @param turn      本轮历史记录器，可为 null
      */
-    private void onError(SseSink sink, Throwable error, Long userId, String sessionId) {
+    private void onError(SseSink sink, Throwable error, Long userId, String sessionId,
+                         AtomicInteger steps, AiChatHistory.Turn turn) {
         String code = classify(error);
         log.error("Agent 对话失败，userId={}, sessionId={}, code={}", userId, sessionId, code, error);
+        if (turn != null) {
+            turn.fail(code, steps.get());
+        }
         sink.send(AiEvent.of(AiEventType.ERROR, Map.of(
                 "code", code,
                 "message", friendlyMessage(code))));
@@ -223,8 +258,13 @@ public class AgentChatHandler {
      * @param sink      SSE 出口
      * @param steps     工具调用步数
      * @param truncated 是否被步数上限截断
+     * @param turn      本轮历史记录器，可为 null
      */
-    private void onComplete(SseSink sink, AtomicInteger steps, AtomicBoolean truncated) {
+    private void onComplete(SseSink sink, AtomicInteger steps, AtomicBoolean truncated,
+                            AiChatHistory.Turn turn) {
+        if (turn != null) {
+            turn.success(steps.get());
+        }
         sink.send(AiEvent.of(AiEventType.DONE, Map.of(
                 "steps", steps.get(),
                 "truncated", truncated.get())));

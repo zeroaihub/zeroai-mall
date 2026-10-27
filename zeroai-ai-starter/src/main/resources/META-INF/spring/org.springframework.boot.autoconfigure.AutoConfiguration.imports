@@ -1,3 +1,4 @@
 com.zeroai.ai.config.AiAgentAutoConfiguration
 com.zeroai.ai.agent.AgentScopeAutoConfiguration
 com.zeroai.ai.mall.proposal.AiActionAutoConfiguration
+com.zeroai.ai.config.AiHistoryAutoConfiguration

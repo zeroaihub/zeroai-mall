@@ -5,6 +5,7 @@ import com.openai.client.OpenAIClientAsync;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.client.okhttp.OpenAIOkHttpClientAsync;
 import com.zeroai.ai.agent.AgentChatHandler;
+import com.zeroai.ai.history.AiChatHistory;
 import com.zeroai.ai.prompt.PromptLoader;
 import com.zeroai.ai.web.AiChatController;
 import com.zeroai.ai.web.AiUserContext;
@@ -82,14 +83,17 @@ public class AiAgentAutoConfiguration {
      * @param properties           AI 配置
      * @param userContext          用户上下文
      * @param agentHandlerProvider Agent 通道处理器提供者；未启用 agentscope 时为空
+     * @param chatHistoryProvider  对话历史门面提供者；历史装配未生效时为空
      * @return 控制器实例
      */
     @Bean
     @ConditionalOnMissingBean
     public AiChatController aiChatController(ChatClient aiChatClient, AiAgentProperties properties,
                                              AiUserContext userContext,
-                                             ObjectProvider<AgentChatHandler> agentHandlerProvider) {
-        return new AiChatController(aiChatClient, properties, userContext, agentHandlerProvider);
+                                             ObjectProvider<AgentChatHandler> agentHandlerProvider,
+                                             ObjectProvider<AiChatHistory> chatHistoryProvider) {
+        return new AiChatController(aiChatClient, properties, userContext,
+                agentHandlerProvider, chatHistoryProvider);
     }
 
     private ChatModel buildOpenAiChatModel(AiAgentProperties properties) {

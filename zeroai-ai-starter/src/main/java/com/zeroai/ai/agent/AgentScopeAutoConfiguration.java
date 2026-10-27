@@ -2,6 +2,7 @@ package com.zeroai.ai.agent;
 
 import com.zeroai.ai.config.AiAgentProperties;
 import com.zeroai.ai.harness.HarnessProperties;
+import com.zeroai.ai.history.AiChatHistory;
 import com.zeroai.ai.mall.port.MallSearchPort;
 import com.zeroai.ai.mall.proposal.ActionProposalProperties;
 import com.zeroai.ai.mall.proposal.ActionProposalService;
@@ -113,11 +114,14 @@ public class AgentScopeAutoConfiguration {
      *
      * @param agentFactory Agent 工厂
      * @param properties   AI 配置
+     * @param chatHistory  对话历史门面，入口未提供存储时为空操作
      * @return Agent 请求编排器
      */
     @Bean
     @ConditionalOnMissingBean
-    public AgentChatHandler agentChatHandler(MallAgentFactory agentFactory, AiAgentProperties properties) {
-        return new AgentChatHandler(agentFactory, properties);
+    public AgentChatHandler agentChatHandler(MallAgentFactory agentFactory,
+                                             AiAgentProperties properties,
+                                             AiChatHistory chatHistory) {
+        return new AgentChatHandler(agentFactory, properties, chatHistory);
     }
 }

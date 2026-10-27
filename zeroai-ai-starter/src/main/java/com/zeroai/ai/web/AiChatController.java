@@ -2,6 +2,7 @@ package com.zeroai.ai.web;
 
 import com.zeroai.ai.agent.AgentChatHandler;
 import com.zeroai.ai.config.AiAgentProperties;
+import com.zeroai.ai.history.AiChatHistory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -56,14 +57,21 @@ public class AiChatController {
      */
     private final ObjectProvider<AgentChatHandler> agentHandlerProvider;
 
+    /**
+     * 对话历史门面。用 {@link ObjectProvider} 取，取不到时按「不记录历史」处理。
+     */
+    private final ObjectProvider<AiChatHistory> chatHistoryProvider;
+
     public AiChatController(ChatClient chatClient,
                             AiAgentProperties properties,
                             AiUserContext userContext,
-                            ObjectProvider<AgentChatHandler> agentHandlerProvider) {
+                            ObjectProvider<AgentChatHandler> agentHandlerProvider,
+                            ObjectProvider<AiChatHistory> chatHistoryProvider) {
         this.chatClient = chatClient;
         this.properties = properties;
         this.userContext = userContext;
         this.agentHandlerProvider = agentHandlerProvider;
+        this.chatHistoryProvider = chatHistoryProvider;
     }
 
     /**
@@ -89,9 +97,9 @@ public class AiChatController {
         // 入口线程取用户快照：异步回调里 ThreadLocal 已失效，不能再取
         Long userId = userContext.currentUserId();
         AgentChatHandler agentHandler = resolveAgentHandler();
+        String sessionId = deriveSessionId(userId);
 
         if (agentHandler != null) {
-            String sessionId = deriveSessionId(userId);
             log.info("AI 对话开始（Agent 通道），userId={}, sessionId={}, questionLength={}",
                     userId, sessionId, question.length());
             agentHandler.handle(sink, userId, sessionId, question);
@@ -99,31 +107,48 @@ public class AiChatController {
         }
 
         log.info("AI 对话开始（单轮通道），userId={}, questionLength={}", userId, question.length());
-        streamWithChatClient(sink, userId, question);
+        streamWithChatClient(sink, userId, sessionId, question);
         return sink.emitter();
     }
 
     /**
      * 单轮问答通道：无工具、无会话，行为与接入 Agent 前完全一致。
+     * <p>
+     * 仍然记录历史：即使引擎切回单轮通道，用户重进页面也该看到聊过什么。
      *
-     * @param sink     SSE 出口
-     * @param userId   用户 ID，仅用于日志
-     * @param question 用户问题
+     * @param sink      SSE 出口
+     * @param userId    用户 ID，仅用于日志与历史归属
+     * @param sessionId 会话标识，仅用于历史归档
+     * @param question  用户问题
      */
-    private void streamWithChatClient(SseSink sink, Long userId, String question) {
+    private void streamWithChatClient(SseSink sink, Long userId, String sessionId, String question) {
+        AiChatHistory history = chatHistoryProvider.getIfAvailable();
+        AiChatHistory.Turn turn = history == null ? null : history.begin(userId, sessionId, question);
+
         chatClient.prompt()
                 .user(question)
                 .stream()
                 .content()
                 .subscribe(
-                        delta -> sink.send(AiEvent.of(AiEventType.MESSAGE_DELTA, Map.of("delta", delta))),
+                        delta -> {
+                            if (turn != null) {
+                                turn.delta(delta);
+                            }
+                            sink.send(AiEvent.of(AiEventType.MESSAGE_DELTA, Map.of("delta", delta)));
+                        },
                         error -> {
                             log.error("AI 流式对话失败，userId={}", userId, error);
+                            if (turn != null) {
+                                turn.fail("AI_STREAM_ERROR", 0);
+                            }
                             sink.send(AiEvent.of(AiEventType.ERROR,
                                     Map.of("code", "AI_STREAM_ERROR", "message", "服务繁忙，请稍后再试")));
                             sink.complete();
                         },
                         () -> {
+                            if (turn != null) {
+                                turn.success(0);
+                            }
                             sink.send(AiEvent.of(AiEventType.DONE, Map.of("steps", 0)));
                             sink.complete();
                         });

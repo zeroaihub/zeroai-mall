@@ -62,6 +62,14 @@ public class ActionProposalService {
     /** 提议编号长度（32 位十六进制短 UUID），足够不可枚举。 */
     private static final int PROPOSAL_NO_LENGTH = 32;
 
+    /**
+     * 同一购物车快照最多尝试生成几条提议。
+     * <p>
+     * 每生成一条并走完生命周期（确认/拒绝/过期），同快照的下一条就要占用新的幂等键；
+     * 上限只是防死循环，正常用户远达不到。
+     */
+    private static final int MAX_PROPOSAL_ATTEMPTS = 10;
+
     /** 快照行分隔符，与 {@link ProposalItem#toLine()} 保持一致。 */
     private static final String ITEM_LINE_SEPARATOR = "\n";
 
@@ -129,14 +137,57 @@ public class ActionProposalService {
         }
 
         PriceSummary price = calculatePrice(items, userCouponId, userId);
-        String idempotencyKey = buildIdempotencyKey(userId, addressId, userCouponId, items);
 
-        // 命中幂等键直接复用既有提议，避免用户重复问「帮我下单」时生成一堆待确认记录
-        AiActionProposal existing = proposalMapper.selectByIdempotencyKey(userId, idempotencyKey);
-        if (existing != null) {
-            return toView(existing);
+        /*
+         * 幂等语义是「同一快照只存在一个待确认提议」，不是「同一快照永远只有一条提议」。
+         * 差别很关键：用户确认过一条提议后再想买同样的东西，如果直接复用旧记录，
+         * 拿到的是一条 status=CONFIRMED 的提议，前端卡片看起来还能点，一点就报「已确认过」。
+         * 因此这里按「尝试序号」逐个探测幂等键：命中 PENDING 就复用，命中历史状态就换下一个键，
+         * 既保留了防重复提交，又让同一购物车快照可以再次生成新提议。
+         */
+        for (int attempt = 0; attempt < MAX_PROPOSAL_ATTEMPTS; attempt++) {
+            String idempotencyKey = buildIdempotencyKey(userId, addressId, userCouponId, items, attempt);
+            AiActionProposal existing = proposalMapper.selectByIdempotencyKey(userId, idempotencyKey);
+            if (existing != null) {
+                if (isReusable(existing)) {
+                    return toView(existing);
+                }
+                continue;
+            }
+
+            AiActionProposal proposal = newProposal(userId, addressId, userCouponId, carts, items,
+                    price, idempotencyKey);
+            try {
+                proposalMapper.insert(proposal);
+            } catch (DuplicateKeyException e) {
+                // 并发下同一快照被两条请求同时插入，唯一键兜住；对方仍是待确认才复用，否则换下一个键
+                AiActionProposal winner = proposalMapper.selectByIdempotencyKey(userId, idempotencyKey);
+                if (winner != null && isReusable(winner)) {
+                    return toView(winner);
+                }
+                continue;
+            }
+            log.info("已生成下单提议 proposalNo={}, userId={}, actualPrice={}, itemCount={}",
+                    proposal.getProposalNo(), userId, price.actualPrice(), items.size());
+            return toView(proposal);
         }
+        throw new BusinessException("下单提议生成过于频繁，请稍后再试");
+    }
 
+    /**
+     * 组装一条待确认提议实体。
+     *
+     * @param userId         用户 ID
+     * @param addressId      收货地址 ID
+     * @param userCouponId   优惠券 ID，可为空
+     * @param carts          购物车列表
+     * @param items          商品快照行
+     * @param price          价格摘要
+     * @param idempotencyKey 本次尝试的幂等键
+     * @return 待插入的提议实体
+     */
+    private AiActionProposal newProposal(Long userId, Long addressId, Long userCouponId, List<Cart> carts,
+                                         List<ProposalItem> items, PriceSummary price, String idempotencyKey) {
         AiActionProposal proposal = new AiActionProposal();
         proposal.setProposalNo(newProposalNo());
         proposal.setUserId(userId);
@@ -154,20 +205,23 @@ public class ActionProposalService {
         proposal.setExpireTime(LocalDateTime.now().plusSeconds(properties.getProposalTtlSeconds()));
         proposal.setCreateTime(LocalDateTime.now());
         proposal.setUpdateTime(LocalDateTime.now());
+        return proposal;
+    }
 
-        try {
-            proposalMapper.insert(proposal);
-        } catch (DuplicateKeyException e) {
-            // 并发下同一快照被两条请求同时插入，唯一键兜住；复用先到的那条即可
-            AiActionProposal winner = proposalMapper.selectByIdempotencyKey(userId, idempotencyKey);
-            if (winner != null) {
-                return toView(winner);
-            }
-            throw e;
+    /**
+     * 判断既有提议能否直接复用。
+     * <p>
+     * 只有「待确认且在有效期内」才算可复用：其余状态要么已经下过单，
+     * 要么已经作废，复用它们只会让用户点到一个注定失败的动作。
+     *
+     * @param proposal 既有提议
+     * @return 可复用返回 true
+     */
+    private static boolean isReusable(AiActionProposal proposal) {
+        if (proposal == null || !ProposalStatus.PENDING.name().equals(proposal.getStatus())) {
+            return false;
         }
-        log.info("已生成下单提议 proposalNo={}, userId={}, actualPrice={}, itemCount={}",
-                proposal.getProposalNo(), userId, price.actualPrice(), items.size());
-        return toView(proposal);
+        return proposal.getExpireTime() == null || proposal.getExpireTime().isAfter(LocalDateTime.now());
     }
 
     /**
@@ -479,13 +533,29 @@ public class ActionProposalService {
      * @param items       商品行
      * @return 43 位 URL 安全摘要
      */
-    private String buildIdempotencyKey(Long userId, Long addressId, Long userCouponId, List<ProposalItem> items) {
+    /**
+     * 构建幂等键。
+     * <p>
+     * {@code attempt=0} 时不加后缀，保持与历史数据的兼容；
+     * 之后每次重试换一个后缀，使「同一快照的第二次提议」有独立键，
+     * 从而在保留唯一约束的前提下允许用户重新下单。
+     *
+     * @param userId       用户 ID
+     * @param addressId    地址 ID
+     * @param userCouponId 优惠券 ID，可为空
+     * @param items        商品行
+     * @param attempt      尝试序号，0 表示首次
+     * @return 43 位 base64url 摘要
+     */
+    private String buildIdempotencyKey(Long userId, Long addressId, Long userCouponId,
+                                       List<ProposalItem> items, int attempt) {
         String fingerprint = items.stream()
                 .map(item -> item.productId() + ":" + item.number() + ":" + item.unitPrice().toPlainString())
                 .sorted()
                 .reduce((left, right) -> left + "|" + right)
                 .orElse("");
-        String source = userId + ":" + addressId + ":" + userCouponId + ":" + fingerprint;
+        String source = userId + ":" + addressId + ":" + userCouponId + ":" + fingerprint
+                + (attempt <= 0 ? "" : "#" + attempt);
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(source.getBytes(StandardCharsets.UTF_8));

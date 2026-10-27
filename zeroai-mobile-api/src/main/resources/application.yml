@@ -66,6 +66,10 @@ zeroai:
   # AI Agent 能力（enabled=false 时不加载任何 AI Bean，行为与接入前一致）
   ai:
     enabled: ${AI_ENABLED:false}
+    # 引擎选择：spring-ai（单轮无工具） / agentscope（带只读商城工具）
+    # 注意必须显式映射：Spring 的 relaxed binding 只认 ZEROAI_AI_ENGINE，
+    # 不认 .env 里的 AI_ENGINE，缺这一行则环境变量写了也不生效
+    engine: ${AI_ENGINE:spring-ai}
     provider: openai
     base-url: ${LLM_BASE_URL:https://api.deepseek.com}
     api-key: ${LLM_API_KEY:}
@@ -80,4 +84,17 @@ zeroai:
     max-history-turns: 8
     tool-timeout-ms: 3000
     degrade-on-error: true
+    # 写操作提议（Human-in-the-loop）：Agent 只能生成待确认提议，
+    # 真正的订单写入必须由用户在页面上点确认后走独立接口
+    action:
+      enabled: ${AI_ACTION_ENABLED:false}
+      proposal-ttl-seconds: ${AI_ACTION_TTL_SECONDS:600}
+      max-items-per-proposal: ${AI_ACTION_MAX_ITEMS:10}
+    # 对话历史：本模块只负责调用存储 SPI，落库实现由入口模块提供（移动端落 ES）
+    history:
+      enabled: ${AI_HISTORY_ENABLED:true}
+      index: ${AI_HISTORY_INDEX:zeroai_ai_chat}
+      max-answer-chars: 8000
+      default-page-size: 20
+      max-page-size: 50
 

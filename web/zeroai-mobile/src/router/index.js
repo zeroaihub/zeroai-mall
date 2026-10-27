@@ -1,6 +1,15 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 
 const routes = [
+  // AI 导购助手：必须声明在兜底路由之前，避免被 /:pathMatch(.*)* 抢走
+  {
+    path: '/ai',
+    name: 'AiAssistant',
+    component: () => import('@/views/ai/index.vue'),
+    meta: {
+      title: '小零 AI 导购'
+    }
+  },
   // 首页
   {
     path: '/:pathMatch(.*)*',

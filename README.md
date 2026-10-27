@@ -483,12 +483,20 @@ curl -N "http://localhost:82/ai/chat?q=你好" -H "Authorization: ${TOKEN}"
 
 ```bash
 export AI_ENABLED=true
+export AI_ENGINE=agentscope          # spring-ai（单轮问答） / agentscope（带工具）
 export LLM_BASE_URL=https://api.deepseek.com
 export LLM_API_KEY=sk-xxxxxxxxxxxxxxxx
 export LLM_MODEL=deepseek-chat
+export AI_ACTION_ENABLED=true        # 打开下单提议（Agent 只生成提议，用户确认后才下单）
+export AI_HISTORY_ENABLED=true       # 对话历史落 ES
 ```
 
 然后重启 `zeroai-mobile-api`。未开启时 `/ai/chat` 端点**根本不会注册**（不是返回 404 语义上的「未实现」，而是完全不存在）。
+
+> **环境变量必须能被识别**：Spring 的 relaxed binding 只认 `ZEROAI_AI_ENGINE` 这类带前缀的名字，
+> `.env` 里平铺写的 `AI_ENGINE` 必须在 `application.yml` 里显式映射一次
+> （`engine: ${AI_ENGINE:spring-ai}`）。这些映射已补齐，直接 `set -a; . ./.env; set +a` 即可。
+> 提议链路还需要先执行 `db-init/ai_action_proposal.sql` 建表。
 
 > 判断端点是否注册时不能只看 HTTP 状态码：本项目 404 被全局异常处理改写为 `HTTP 200 + {"code":500}`，要与一个确定不存在的路径对比才看得出差别。
 
@@ -510,6 +518,25 @@ cd web/zeroai-admin  && npm install --legacy-peer-deps --no-audit && npm run dev
 - H5 登录前先跑 `set-login-code.py`；后台用 `admin / 123456`（需图形验证码）。
 - 后台 `npm install` 若报 `Cannot read properties of null (reading 'edgesOut')`（npm 10 已知 bug），加 `--legacy-peer-deps`。
 - 想看后台页面就必须额外启动 `zeroai-admin-api`（81），P0 冒烟那条链路只覆盖了 82。
+
+### 9.1 H5 端 AI 导购入口
+
+H5 已内置 AI 对话页，主页面（首页 / 分类 / 购物车 / 我的）右下角有「AI 导购」浮动入口，
+点击进入 `http://localhost:4949/mall/#/ai`。
+
+| 关注点 | 实现 |
+|---|---|
+| 页面 | `web/zeroai-mobile/src/views/ai/index.vue`，路由 `AiAssistant`（`/ai`） |
+| 入口 | `web/zeroai-mobile/src/components/AiEntry/index.vue`，由 `App.vue` 在 `meta.showTab` 页渲染 |
+| 接口 | `src/api/ai.js` 的 `streamAgentChat()`，走 `GET /ai/chat?q=`；`fetchAiHistory()` / `clearAiHistory()` / `confirmOrderProposal()` |
+| 鉴权 | `/ai/**` 不在匿名白名单，未登录访问 `#/ai` 会被路由守卫重定向到登录页 |
+| 流式 | 不用 `EventSource`（无法自定义请求头），改用 `fetch` + `ReadableStream` 手动解析 SSE，带上 `Authorization` |
+| 渲染 | `thinking` / `tool_result` 渲染为工具过程态，`message_delta` 累加为打字机文本，`confirm_action` 渲染为提议卡片，`error` 显示为红色提示 |
+| 历史 | 进页 `GET /ai/history?limit=20` 还原气泡；「清空」会同时删除服务端 ES 记录 |
+| 下单 | 提议卡片上的「确认下单」调 `POST /ai/action/confirm/{proposalNo}`，这是唯一会创建订单的入口 |
+
+> 该页依赖后端 `AI_ENABLED=true` 且 `AI_ENGINE=agentscope`。
+> 未开启 AI 时整页仍可打开，但发送消息会收到明确的错误提示，不会白屏。
 
 ## 10. 冒烟基线
 
