@@ -98,9 +98,12 @@ zeroai:
       default-page-size: 20
       max-page-size: 50
     # 知识库（RAG）：政策/规则类文档随代码打包，启动时同步到 ES 的独立索引；
-    # 不引入向量库，商品实时数据也不复制进来
+    # 商品实时数据不复制进来
     knowledge:
       enabled: ${AI_KNOWLEDGE_ENABLED:true}
+      # 检索模式：bm25（默认，ES 倒排）/ vector（纯向量）/ hybrid（两路 RRF 融合）
+      # 默认 bm25 的理由：不依赖任何 embedding 服务即可回答政策问题
+      mode: ${AI_KNOWLEDGE_MODE:bm25}
       index: ${AI_KNOWLEDGE_INDEX:zeroai_ai_kb}
       location: knowledge
       sync-on-startup: ${AI_KNOWLEDGE_SYNC_ON_STARTUP:true}
@@ -110,4 +113,27 @@ zeroai:
       # 覆盖率要求与得分下限：检索调优参数，改这里不用改代码
       min-should-match: ${AI_KNOWLEDGE_MIN_SHOULD_MATCH:2<70%}
       min-score: ${AI_KNOWLEDGE_MIN_SCORE:1.5}
+      # 向量化服务（OpenAI 兼容 /v1/embeddings；仅 mode 非 bm25 时需要）。
+      # 与对话模型是两套配置：DeepSeek 没有 embedding 接口，不能复用 LLM_API_KEY
+      embedding:
+        base-url: ${AI_EMBEDDING_BASE_URL:}
+        path: ${AI_EMBEDDING_PATH:/v1/embeddings}
+        api-key: ${AI_EMBEDDING_API_KEY:}
+        model: ${AI_EMBEDDING_MODEL:text-embedding-v3}
+        dimension: ${AI_EMBEDDING_DIMENSION:1024}
+        timeout-ms: 5000
+        max-chars: 1000
+        batch-size: 16
+      vector:
+        # 余弦相似度下限。与上面的 min-score 量纲不同，不能互相套用
+        min-score: ${AI_KNOWLEDGE_VECTOR_MIN_SCORE:0.55}
+        chunk-size: 300
+        min-chunk-chars: 60
+        prefix-title: true
+      hybrid:
+        rrf-k: 60
+        # 融合后阈值，默认 0：两路各自已过滤过低分，这里再设会误杀单路语义命中
+        min-score: 0
+        # 向量分支挂掉时是否退回纯 BM25
+        fallback-to-bm25: true
 

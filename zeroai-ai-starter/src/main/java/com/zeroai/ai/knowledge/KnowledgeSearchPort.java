@@ -28,4 +28,16 @@ public interface KnowledgeSearchPort {
      * @return 命中列表，按相关度倒序；无命中返回空列表，不返回 null
      */
     List<KnowledgeHit> search(String query, int limit);
+
+    /**
+     * 本实现属于哪种检索模式，仅用于日志与排障。
+     * <p>
+     * 路由不依赖本方法选实现（那由 {@link Bm25KnowledgePort} / {@link VectorKnowledgePort}
+     * 两个标记接口决定），这里只回答「当前真正在用的是谁」。
+     *
+     * @return 模式，默认 BM25
+     */
+    default KnowledgeMode mode() {
+        return KnowledgeMode.BM25;
+    }
 }

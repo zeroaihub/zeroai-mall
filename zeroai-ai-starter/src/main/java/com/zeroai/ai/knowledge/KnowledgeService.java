@@ -21,6 +21,12 @@ import java.util.Set;
  *       前者应建议稍后再试，后者必须直接说不知道。</li>
  *   <li><b>片段清洗与截断在这里做</b>，而不是在存储实现里做。
  *       存储负责检索，门面负责「能不能安全地给模型看」，职责不混。</li>
+ *   <li><b>不做「分数够不够」的判断</b>。BM25 分数（实测正确命中 2.4 以上）与
+ *       余弦相似度（0..1）、RRF 融合分（0.03 量级）三者量纲完全不同，
+ *       门面若按其中一个阈值过滤，切模式后要么全空要么全放行，
+ *       而且不会报错——这是最隐蔽的一类故障。阈值属于实现细节，
+ *       由各实现按自己的量纲过滤（ES 的 {@code min-score}、
+ *       向量的 {@code vector.min-score}、融合的 {@code hybrid.min-score}）。</li>
  *   <li><b>不缓存</b>。政策文档是低频变更的小语料，缓存收益极小，
  *       却会引入「文档更新后回答还是旧口径」的问题。</li>
  * </ol>
@@ -28,17 +34,6 @@ import java.util.Set;
 public class KnowledgeService {
 
     private static final Logger log = LoggerFactory.getLogger(KnowledgeService.class);
-
-    /**
-     * 检索前剔除的噪声词。按长度倒序匹配，避免「在哪里」被「哪里」提前截断。
-     */
-    private static final List<String> NOISE_PHRASES = List.of(
-            "想问一下", "请问一下", "帮我看下", "帮我看看", "能不能", "可不可以", "有没有",
-            "在哪里", "请问", "想问", "麻烦", "帮我", "一下",
-            "怎么办", "怎么", "怎样", "怎么样", "如何", "什么", "哪些", "哪个", "哪里", "在哪",
-            "可以", "能否", "你们", "我们", "这个", "那个", "现在",
-            "吗", "呢", "吧", "啊", "呀", "嘛", "的", "是", "了", "我", "你"
-    );
 
     /** 检索状态。 */
     public enum Status {
@@ -128,9 +123,6 @@ public class KnowledgeService {
             if (hit == null || hit.sourceId() == null || hit.sourceId().isBlank()) {
                 continue;
             }
-            if (hit.score() < properties.getMinScore()) {
-                continue;
-            }
             if (!seenSource.add(hit.sourceId())) {
                 // 同一篇文档的多个片段对模型没有增量信息，保留最高分的那条
                 continue;
@@ -151,37 +143,25 @@ public class KnowledgeService {
     }
 
     /**
-     * 归一化查询串：去零宽字符、压缩空白、剔除疑问词与口头语、按 {@code max-query-chars} 截断。
+     * 归一化查询串：去零宽字符、压缩空白、按 {@code max-query-chars} 截断。
      * <p>
-     * 为什么要剔除疑问词：「在哪里查看我的订单」被 ik 切成
-     * {@code 在哪 / 哪里 / 查看 / 看我 / 订单}，其中三个词元在任何文档里都不存在，
-     * 但它们会计入 {@code minimum_should_match} 的分母，把「查看 + 订单」这种完全正确的匹配
-     * 压到阈值以下。剔掉「哪里 / 怎么 / 可以 / 吗」这类词，再交给 ES，
-     * 覆盖率阈值才真正反映「业务词命中了几成」。
+     * <b>这里刻意不剔除疑问词</b>，尽管倒排索引很需要这一步。原因：向量检索用同一句
+     * 问话时，删掉「在哪里」「怎么」会让语义变弱，而门面并不该替实现决定
+     * 「我的引擎能不能理解虚词」。噪声词剔除放在 {@link KnowledgeQueryNormalizer#stripNoise}，
+     * 由需要在倒排索引上打分的那一路自己调用。
      * <p>
-     * 只做「删除噪声词」，不做同义词替换：改写语义是模型层的事，
-     * 检索层擅自改写会让评测结果无法解释。
+     * 也不做同义词替换：改写语义是模型层的事，检索层擅自改写会让评测结果无法解释。
      *
      * @param rawQuery 原始查询
      * @return 归一化结果，空串表示无有效查询
      */
     private String normalizeQuery(String rawQuery) {
-        if (rawQuery == null) {
+        String cleaned = KnowledgeQueryNormalizer.clean(rawQuery, Math.max(1, properties.getMaxQueryChars()));
+        if (cleaned.isEmpty() && rawQuery != null && !rawQuery.isBlank()) {
+            // 只有零宽字符/空白时 clean 会得到空串，此时按「无有效查询」处理，不构造空查询去打搜索引擎
             return "";
         }
-        String cleaned = rawQuery.replaceAll("[\\u200B-\\u200F\\uFEFF]", "")
-                .replaceAll("\\s+", " ")
-                .trim();
-        for (String noise : NOISE_PHRASES) {
-            cleaned = cleaned.replace(noise, " ");
-        }
-        cleaned = cleaned.replaceAll("\\s+", " ").trim();
-        if (cleaned.isEmpty()) {
-            // 全是噪声词（例如只问了「怎么办」）时保留原句，让检索层自己去判断，而不是构造空查询
-            cleaned = rawQuery.replaceAll("\\s+", " ").trim();
-        }
-        int max = Math.max(1, properties.getMaxQueryChars());
-        return cleaned.length() > max ? cleaned.substring(0, max) : cleaned;
+        return cleaned;
     }
 
     /**

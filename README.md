@@ -198,12 +198,48 @@ flowchart LR
 
 | 设计决定 | 取舍 |
 |---|---|
-| **不引入 PGVector** | 语料只有 6 篇政策文档，提问集中在固定业务词上，BM25 + ik 已经够用。加向量库要新增中间件、embedding 调用和一条失败链路，收益无法验证。真需要语义召回时只换 `KnowledgeSearchPort` 实现 |
+| **不上 PGVector，但做了向量检索** | 语义召回用进程内索引实现：6 篇政策切块后 11 个向量，暴力余弦是微秒级操作。为此起一个 Postgres 容器不划算，但「想换语义检索却换不了」也不行——所以做成可切换的两条路（见下） |
 | **商品数据不进知识库** | `goods` 索引是实时数据，知识索引是低频变更的规则文本。合并会让商品全量重建把知识冲掉 |
 | **知识与商品分索引** | `zeroai_ai_kb` 与 `goods` 互不影响；知识索引是纯派生数据，删了重启即重建 |
 | **文档即代码** | 政策随代码评审、发布、回滚，改一句话就是一个可 review 的 diff，不会出现「代码上线了知识库还是旧口径」 |
 | **知识片段不是指令** | 入库前用 `KnowledgeGuard` 拦截「忽略之前的指令」类文本并整篇拒收；检索后再按句清洗一次 |
 | **命中不带来权限** | `search_knowledge` 无 userId 参数、只读公开文档；写能力是否注册只由 `AI_ACTION_ENABLED` 决定 |
+
+#### 检索模式可切换：BM25 / 向量 / 混合
+
+```yaml
+zeroai.ai.knowledge.mode: bm25      # bm25（默认）| vector | hybrid
+```
+
+```mermaid
+flowchart LR
+    S["KnowledgeService<br/>清洗 · 去重 · 截断"] --> R["KnowledgeSearchRouter"]
+    R -->|"mode=bm25"| ES["EsKnowledgeStore<br/>ES 倒排 · BM25"]
+    R -->|"mode=vector"| V["VectorKnowledgeStore<br/>切块 → 向量 → 余弦"]
+    R -->|"mode=hybrid"| F["两路都查 → RRF 融合"]
+    V -.->|"POST /v1/embeddings"| EM["任意 OpenAI 兼容服务"]
+```
+
+切换只改一个配置项，工具定义、HTTP 接口、提示词、前端都不动。三个设计上的硬要求：
+
+| 要求 | 为什么 |
+|---|---|
+| **三种分数不共用一个阈值** | BM25 是 2.4 量级、余弦是 0~1、RRF 是 0.016~0.033。用同一个 `min-score` 过滤，切模式后必然「全部查不到」且不报错。阈值下沉到各实现：`min-score` / `vector.min-score` / `hybrid.min-score` |
+| **查询清洗强度跟检索走** | 倒排索引需要剔掉「在哪里」「怎么」（否则 `minimum_should_match` 分母虚高）；向量检索恰恰靠这些词表达语义。所以门面只做字符清理，剔虚词由 ES 实现自己做 |
+| **能力故障不伪装成知识缺失** | 索引未就绪、embedding 服务挂了，一律抛异常 → `UNAVAILABLE`（模型说「稍后再试」），绝不返回空列表。空列表会被说成「知识库里没有这条政策」 |
+
+混合模式用 **RRF（倒数排名融合）** 而不是加权分数：两个分数量纲不可比，任何权重都是拍脑袋；RRF 只用排名，两路都排第一的文档必然优于只在一路排第一的。向量分支挂掉时默认退回 BM25（`hybrid.fallback-to-bm25=true`），语义召回是增强项，它没了不代表字面检索也错了。
+
+实机验证（假 embedding 服务，仅验证链路与降级，不评估召回质量）：
+
+| 场景 | 结果 |
+|---|---|
+| 默认 bm25 | 行为与 Phase 7 完全一致，零 embedding 调用 |
+| hybrid + 向量服务在 | 6 篇 → 11 块 256 维；退款/运费/优惠券均正确命中 |
+| hybrid + 向量服务停 | 启动不阻断，WARN 后**自动退回 BM25**，检索仍正确 |
+| vector + 向量服务停 | 返回 `UNAVAILABLE`，**不是**「查不到」 |
+
+局限写在文档里，最重要的一条：**语义效果没有实测**（DeepSeek 无 embedding 接口、本机无 Ollama），链路和降级验证了，召回质量没有；`vector.min-score` 的 0.55 也只有通用经验支撑，换模型必须重校准。详见 [`docs/agent/PHASE-7-VECTOR-RAG.md`](./docs/agent/PHASE-7-VECTOR-RAG.md)。
 
 检索质量实测（29 条用例，`scripts/agent/knowledge/eval_knowledge.py`，本机单实例、平均 23ms/次）：
 
@@ -280,11 +316,18 @@ zeroai:
       max-answer-chars: 8000
     knowledge:                            # 知识库（RAG）
       enabled: ${AI_KNOWLEDGE_ENABLED:true}
+      mode: ${AI_KNOWLEDGE_MODE:bm25}     # bm25 | vector | hybrid，切换只改这里
       index: ${AI_KNOWLEDGE_INDEX:zeroai_ai_kb}
       sync-on-startup: true               # 启动时全量同步，幂等
       max-hits: 3
-      min-should-match: 2<70%             # 覆盖率要求：调检索主要改这里
-      min-score: 1.5                      # 得分下限，滤掉共用一个泛词的噪声命中
+      min-should-match: 2<70%             # 覆盖率要求：调 BM25 主要改这里
+      min-score: 1.5                      # BM25 得分下限，滤掉共用一个泛词的噪声命中
+      embedding:                          # 向量化服务（mode 非 bm25 时才需要）
+        base-url: ${AI_EMBEDDING_BASE_URL:}
+        model: ${AI_EMBEDDING_MODEL:text-embedding-v3}
+        dimension: ${AI_EMBEDDING_DIMENSION:1024}   # 校验值，与模型实际返回不符会启动即失败
+      vector:
+        min-score: 0.55                   # 余弦下限，与上面的 min-score 量纲不同
     harness:                              # AgentScope 能力位，默认全关
       skills-enabled: false
       memory-enabled: false
@@ -334,7 +377,7 @@ AiUserContext aiUserContext() {
 | **会话级重置** | 清空历史只清 ES | 同步清 AgentScope session，否则模型还记得上一轮的购物车 |
 | **物流能力缺口** | 无物流工具，问「我的快递到哪了」只能答查不到 | 接快递 100 / 顺丰 API，作为第 9 个只读工具 |
 | **知识库发布方式** | 改政策要发版（文档随 jar 打包） | 增加运营侧维护入口，同时保留「代码即知识源」作为兜底口径 |
-| **知识检索只有 BM25** | 换个说法问同一件事可能召回不到 | 先把评测集扩到 80 条以上，用失败样本判断是否真需要向量召回 |
+| **向量检索缺实测** | 代码与切换机制已具备，但没有真实 embedding 服务，语义召回效果未验证 | 配一个真实服务，用 29 条评测集跑 bm25 / vector / hybrid 三组对比 |
 | **H5 体验** | 支持流式、工具过程态、提议卡片 | 增加中断续答、消息重发、多轮引用商品跳转 |
 
 ---
@@ -362,7 +405,7 @@ AiUserContext aiUserContext() {
 |:--:|---|---|:--:|
 | P8 | 多模态 | 拍图搜同款、小票识别 | 中 |
 | P9 | 工程化放量 | 限流、审计、成本看板、离线评测集回归 | 高 |
-| P10 | 语义召回 | 只有实测证明 BM25 不够时才引入向量库，放独立 compose profile | 低 |
+| P10 | 语义召回验证 | 向量 / 混合检索的代码已就绪（见 §2.6），缺真实 embedding 下的效果实测与阈值校准 | 中 |
 | P10 | MCP 化 | 把商城工具以 MCP Server 形式对外暴露，供其他 Agent 复用 | 中 |
 | P11 | 主动式 Agent | 到货 / 降价 / 库存回补提醒，事件驱动而非问答驱动 | 低 |
 
@@ -704,6 +747,7 @@ cd web/zeroai-admin  && npm install --legacy-peer-deps --no-audit && npm run dev
 | [`docs/AGENT_INTEGRATION_SOP.md`](./docs/AGENT_INTEGRATION_SOP.md) | 执行规程：变量表、8 条铁律、阶段门禁、偏差登记 | 按阶段执行时对照 |
 | [`docs/agent/PRACTICE-GUIDE.md`](./docs/agent/PRACTICE-GUIDE.md) | 实践手册：拿自己的业务流程走一遍 P0→P6 | 想复用这套方法时 |
 | [`docs/agent/PHASE-7-rag-knowledge.md`](./docs/agent/PHASE-7-rag-knowledge.md) | 知识库：知识源、为什么不上向量库、检索调优与评测、注入防护 | 想复用 RAG 能力时 |
+| [`docs/agent/PHASE-7-VECTOR-RAG.md`](./docs/agent/PHASE-7-VECTOR-RAG.md) | 检索模式切换：向量检索实现、分块、阈值分层、RRF 融合、失败降级与实机验证 | 要开向量 / 混合检索时 |
 | [`docs/agent/`](./docs/agent/) | 各阶段实测记录：工具、事件流、Harness、HITL、提示词约束、历史落库 | 想知道「为什么这么设计」 |
 | [`docs/agent/BASELINE-METRICS.md`](./docs/agent/BASELINE-METRICS.md) | Agent 度量基线：token、步数、首字延迟、拒答率 | 优化前后对比 |
 | [`docs/BOOT4_MIGRATION_NOTES.md`](./docs/BOOT4_MIGRATION_NOTES.md) | Boot 4 迁移手册：包路径、Jackson 3、Security 7、启动期坑 | 升级或排错时查 |
@@ -744,6 +788,9 @@ cd web/zeroai-admin  && npm install --legacy-peer-deps --no-audit && npm run dev
 | 知识索引靠启动全量同步 | 改 mapping 必须删索引重建；运行期新增文档不生效 | 需要热更新时再加管理端 reindex 接口 |
 | 知识库只覆盖 6 篇政策 | 发票、分期、积分、加盟等仍答「查不到」 | 按真实客服问题补充文档，用评测集驱动扩写 |
 | 检索评测集与调参同源 | 29 条用例参与过阈值调优，存在过拟合风险 | 另建留出集（本次已做 6 条抽样，结论见 PHASE-7 文档） |
+| 向量检索未做语义效果实测 | 只验证了链路与降级，不知道它能否救回 BM25 漏掉的问法 | 配一个真实 embedding 服务后，用同一评测集跑 bm25 / vector / hybrid 三组对比 |
+| `vector.min-score` 缺实测依据 | 0.55 来自通用经验，换模型可能全查不到或全放行 | 用评测集重新扫一遍阈值曲线 |
+| 向量索引不持久化 | 每次启动重算；语料上千条后启动预算会被吃 | 上量后换成持久化实现（`VectorKnowledgeStore` 内换 `InMemoryVectorIndex` 即可） |
 
 ---
 

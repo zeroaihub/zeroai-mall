@@ -96,20 +96,21 @@ class KnowledgeServiceTest {
         KnowledgeService.Result result = service.search("  支持七天无理由吗  ", 3);
 
         assertEquals(KnowledgeService.Status.NO_MATCH, result.status());
-        assertEquals("支持七天无理由", result.query(), "查询串应压缩空白并剔除疑问词");
+        assertEquals("支持七天无理由吗", result.query(), "门面只压缩空白，不改写语义");
     }
 
     @Test
-    @DisplayName("疑问词被剔除，业务词保留")
-    void shouldStripNoisePhrases() {
+    @DisplayName("门面不剔除疑问词：语义信息要留给向量检索")
+    void shouldNotStripNoisePhrasesInFacade() {
         StubPort port = StubPort.returning(hit("kb-shopping-help", "内容"));
         KnowledgeService service = new KnowledgeService(port, new KnowledgeProperties());
 
         service.search("在哪里查看我的订单", 3);
 
-        String sent = port.queries.get(0);
-        // 剔除噪声词后留下「查看 订单」：中间的空格是有意的分词分隔符，不影响 ik 切词
-        assertEquals("查看 订单", sent, "噪声词会让覆盖率分母虚高，必须在检索前剔除");
+        // 剔除疑问词是倒排索引的需要（否则 minimum_should_match 分母虚高），
+        // 但向量检索恰恰靠这些词表达语义，所以这一步下沉到 EsKnowledgeStore，
+        // 由 KnowledgeQueryNormalizer.stripNoise 提供
+        assertEquals("在哪里查看我的订单", port.queries.get(0), "门面不得篡改语义");
     }
 
     @Test
@@ -182,13 +183,18 @@ class KnowledgeServiceTest {
     }
 
     @Test
-    @DisplayName("得分低于下限的命中被过滤")
-    void shouldFilterByMinScore() {
+    @DisplayName("门面不按分数过滤：三种检索的分数量纲不同，阈值由实现负责")
+    void shouldNotFilterByScoreInFacade() {
         KnowledgeProperties properties = new KnowledgeProperties();
+        // BM25 的阈值故意设得比命中分数高：如果门面还在按它过滤，这条会被吞掉
         properties.setMinScore(6.0);
         KnowledgeService service = new KnowledgeService(
-                StubPort.returning(hit("kb-a", "低分片段"), hit("kb-b", "另一条")), properties);
+                StubPort.returning(hit("kb-a", "低分片段")), properties);
 
-        assertEquals(KnowledgeService.Status.NO_MATCH, service.search("退款", 3).status());
+        KnowledgeService.Result result = service.search("退款", 3);
+
+        assertEquals(KnowledgeService.Status.OK, result.status(),
+                "门槛过滤在实现侧（min-score / vector.min-score / hybrid.min-score），门面不能一刀切");
+        assertEquals(1, result.hits().size());
     }
 }

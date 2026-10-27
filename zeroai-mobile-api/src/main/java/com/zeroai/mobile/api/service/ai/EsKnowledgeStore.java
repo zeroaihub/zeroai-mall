@@ -2,11 +2,12 @@ package com.zeroai.mobile.api.service.ai;
 
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
+import com.zeroai.ai.knowledge.Bm25KnowledgePort;
 import com.zeroai.ai.knowledge.KnowledgeCatalog;
 import com.zeroai.ai.knowledge.KnowledgeDocument;
 import com.zeroai.ai.knowledge.KnowledgeHit;
 import com.zeroai.ai.knowledge.KnowledgeProperties;
-import com.zeroai.ai.knowledge.KnowledgeSearchPort;
+import com.zeroai.ai.knowledge.KnowledgeQueryNormalizer;
 import com.zeroai.ai.knowledge.KnowledgeVisibility;
 import lombok.extern.slf4j.Slf4j;
 import org.elasticsearch.ResourceAlreadyExistsException;
@@ -61,7 +62,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Slf4j
 @Component
 @ConditionalOnExpression("${zeroai.ai.enabled:false} && ${zeroai.ai.knowledge.enabled:true}")
-public class EsKnowledgeStore implements KnowledgeSearchPort, ApplicationRunner {
+public class EsKnowledgeStore implements Bm25KnowledgePort, ApplicationRunner {
 
     /** 可见范围字段，所有检索都必须带上 public 过滤。 */
     private static final String FIELD_VISIBILITY = "visibility";
@@ -252,7 +253,13 @@ public class EsKnowledgeStore implements KnowledgeSearchPort, ApplicationRunner 
      * @return 命中列表；检索故障抛 {@link IllegalStateException} 由门面转为「不可用」
      */
     @Override
-    public List<KnowledgeHit> search(String query, int limit) {
+    public List<KnowledgeHit> search(String rawQuery, int limit) {
+        // 倒排索引专用的清洗：剔除疑问词与口头语，让 minimum_should_match 只统计业务词。
+        // 这一步不能放到门面里做——向量检索恰恰需要保留这些词来表达语义。
+        String query = KnowledgeQueryNormalizer.stripNoise(rawQuery, properties.getMaxQueryChars());
+        if (query.isEmpty()) {
+            return List.of();
+        }
         try {
             if (!indexExists()) {
                 // 索引还没建起来（首次启动同步失败等）：明确表达「查不到」，不当成有空结果

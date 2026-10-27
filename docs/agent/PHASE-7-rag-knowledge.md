@@ -29,6 +29,11 @@ Phase 6 之后 Agent 已经能查商品、查订单、发起下单提议，但�
 并规定触发条件：**先用评测集证明 BM25 不够**，再谈向量。真到那天，只需要换掉
 `KnowledgeSearchPort` 的实现，工具、提示词、前端一行不用改。
 
+> **后续（[`PHASE-7-VECTOR-RAG.md`](./PHASE-7-VECTOR-RAG.md)）**：向量检索已经补上，
+> 但仍没有 PGVector——用的是进程内索引（11 个块，暴力余弦），
+> 通过 `zeroai.ai.knowledge.mode` 在 bm25 / vector / hybrid 之间切换。
+> 本篇第二节的结论仍然成立：不上向量库，也不让它成为向量检索的前提。
+
 ## 三、知识源：代码即知识库
 
 文档放在 `zeroai-ai-starter/src/main/resources/knowledge/*.md`，随 jar 打包：
