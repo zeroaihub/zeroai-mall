@@ -3,3 +3,4 @@ com.zeroai.ai.agent.AgentScopeAutoConfiguration
 com.zeroai.ai.mall.proposal.AiActionAutoConfiguration
 com.zeroai.ai.config.AiHistoryAutoConfiguration
 com.zeroai.ai.config.KnowledgeAutoConfiguration
+com.zeroai.ai.mcp.MallMcpServerAutoConfiguration

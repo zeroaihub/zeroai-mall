@@ -6,13 +6,15 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.zeroai.util.util.ServletUtils;
 import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletRequest;
-import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.cors.CorsUtils;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -22,7 +24,7 @@ import java.util.concurrent.TimeUnit;
  * 该配置替代 mobile-api 原 Spring Security 过滤链，只负责移动端 token 读取、登录校验和跨域放行。
  */
 @Configuration
-@AllArgsConstructor
+@RequiredArgsConstructor
 public class MobileSaTokenConfiguration implements WebMvcConfigurer {
 
     private static final String TOKEN_HEADER = "Authorization";
@@ -64,6 +66,12 @@ public class MobileSaTokenConfiguration implements WebMvcConfigurer {
 
     private final SaTokenConfig saTokenConfig;
 
+    @Value("${zeroai.ai.mcp.enabled:false}")
+    private boolean mcpEnabled;
+
+    @Value("${spring.ai.mcp.server.streamable-http.mcp-endpoint:/mcp}")
+    private String mcpEndpoint;
+
     /**
      * 初始化移动端 token 读取规则，保持前端仍使用 Authorization 头传递 token 的调用契约。
      */
@@ -91,7 +99,22 @@ public class MobileSaTokenConfiguration implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new SaInterceptor(handle -> checkMobileLogin()))
                 .addPathPatterns("/**")
-                .excludePathPatterns(EXCLUDE_PATHS);
+                .excludePathPatterns(resolveExcludePaths());
+    }
+
+    /**
+     * 构建 Sa-Token 匿名路径。MCP 只在显式开启且 endpoint 合法时放行，
+     * 避免关闭 MCP 后仍对配置路径暴露匿名访问。
+     *
+     * @return 移动端匿名访问路径
+     */
+    List<String> resolveExcludePaths() {
+        List<String> excludePaths = new ArrayList<>(EXCLUDE_PATHS);
+        if (mcpEnabled && mcpEndpoint != null && mcpEndpoint.startsWith("/")) {
+            // MCP 使用独立短期签名 token，由 McpAuthenticationFilter 在入口验签。
+            excludePaths.add(mcpEndpoint);
+        }
+        return excludePaths;
     }
 
     /**

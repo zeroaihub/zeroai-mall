@@ -441,6 +441,9 @@ Phase 7 — RAG 与知识检索（可选扩展）
 
 Phase 8 — MCP 工具化（可选扩展）
 
+> 状态：已实现。固定 4 个只读工具、Streamable HTTP、HMAC 短期身份和双客户端 smoke
+> 见 [`docs/agent/PHASE-8-mcp.md`](./agent/PHASE-8-mcp.md)。
+
 任务
 
 1. 先完成商城只读工具接口稳定化，再考虑通过 MCP 暴露。

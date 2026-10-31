@@ -28,6 +28,12 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-client-chat</artifactId>
         </dependency>
+        <!-- P8：MCP Streamable HTTP Server。默认由 MCP_ENABLED=false 关闭，
+             只在入口模块显式开启时注册只读工具，不影响商城原生 API。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+        </dependency>
         <!-- Spring AI 2.0 改用官方 OpenAI Java SDK 建客户端（OpenAiApi 已移除），
              core 只有接口，OkHttp 实现需显式引入 -->
         <dependency>

@@ -46,6 +46,7 @@
   - [2.7 六道工程防线](#27-六道工程防线)
   - [2.8 实测表现](#28-实测表现)
   - [2.9 AI 能力开关与配置](#29-ai-能力开关与配置)
+  - [2.10 MCP：把只读工具交给其他 Agent](#210-mcp把只读工具交给其他-agent)
 - [3. 正在迭代](#3-正在迭代)
 - [4. 路线图](#4-路线图)
 - [5. 技术栈](#5-技术栈)
@@ -72,11 +73,12 @@
 
 | 原则 | 落地方式 |
 |---|---|
-| **AI 不写死在业务代码里** | 通用能力收敛到 `zeroai-ai-starter`，业务工具与业务模块分居两侧，starter 看不到订单表 |
+| **AI 不写死在业务代码里** | 通用能力收敛到 `zeroai-ai-starter`，具体业务查询由入口模块实现；starter 只通过 `zeroai-domain-api` 契约调用，不持有领域实现 |
 | **AI 说得出的话必须查得到** | 商品、价格、库存、订单一律走工具调用，Prompt 里写死「未调用工具就等于不知道」 |
 | **AI 不能动钱和库存** | Agent 没有写工具。它只能生成「待确认提议」，真正的下单必须由用户在界面上点第二次 |
 
-这条边界不是文档里的许诺，而是编译期和运行期都能验证的：`zeroai-ai-starter` 与业务模块无依赖关系，工具层只暴露只读查询 + 一张提议表。
+这条边界不是文档里的许诺，而是编译期和运行期都能验证的：工具层只暴露只读查询 + 一张提议表，
+Agent 侧不存在下单、支付、退款或扣库存工具。
 
 ---
 
@@ -281,7 +283,8 @@ flowchart LR
 
 ### 2.9 AI 能力开关与配置
 
-**默认全关**。`AI_ENABLED=false` 时不注册任何 AI Bean，应用行为与未接入时完全一致，不产生任何模型费用。
+**默认全关**。`AI_ENABLED=false` 时不加载对话模型与 Agent Bean，应用行为与未接入时一致，不产生模型费用。
+MCP 是独立开关：即使 `AI_ENABLED=false`，也可以只为其他 Agent 提供只读商城工具。
 
 ```bash
 # .env 里平铺写即可，yml 已显式映射
@@ -293,6 +296,8 @@ LLM_MODEL=deepseek-flash
 AI_ACTION_ENABLED=true        # 下单提议（Agent 只生成提议，用户确认后才下单）
 AI_HISTORY_ENABLED=true       # 对话历史落 ES
 AI_KNOWLEDGE_ENABLED=true     # 知识库（复用 ES，不引入向量库）
+MCP_ENABLED=false             # MCP 只读入口，默认关闭
+MCP_TOKEN_SECRET=             # 至少 32 字节，必须与登录/模型/支付密钥隔离
 ```
 
 ```yaml
@@ -328,6 +333,11 @@ zeroai:
         dimension: ${AI_EMBEDDING_DIMENSION:1024}   # 校验值，与模型实际返回不符会启动即失败
       vector:
         min-score: 0.55                   # 余弦下限，与上面的 min-score 量纲不同
+    mcp:                                  # 独立于 AI 对话开关
+      enabled: ${MCP_ENABLED:false}
+      token-secret: ${MCP_TOKEN_SECRET:}
+      max-token-ttl: 1h
+      allow-remote: ${MCP_ALLOW_REMOTE:false}
     harness:                              # AgentScope 能力位，默认全关
       skills-enabled: false
       memory-enabled: false
@@ -357,9 +367,44 @@ AiUserContext aiUserContext() {
 }
 ```
 
-业务工具不属于 starter，由接入方在自己的业务模块注册——这样 AI 模块永远不会反向依赖业务模块。
+商城工具的具体查询实现由入口模块提供；starter 只依赖跨域契约模块，不依赖任何
+`zeroai-domain-*` 实现模块，也不复制订单、库存或商品业务逻辑。
 
 </details>
+
+### 2.10 MCP：把只读工具交给其他 Agent
+
+MCP Server 使用 Streamable HTTP，默认关闭，启用后挂载在 `/mcp`。它不替代内部 Java Service，
+只把现有只读能力适配成固定的 4 工具白名单：
+
+| 工具 | 用途 | 关键限制 |
+|---|---|---|
+| `search_products` | 商品关键词搜索 | 最多 10 条 |
+| `get_product_detail` | 商品与 SKU 摘要 | 不暴露 `lockedStock` |
+| `search_knowledge` | 公开政策检索 | 只返回 public 知识 |
+| `list_my_orders` | 当前 token 用户订单 | 参数中没有 `userId`，最多 5 条 |
+
+安全设计：
+
+- **不注册写工具**：下单、支付、退款、改地址、扣库存、`propose_order` 均不在 MCP 工具面。
+- **不信任客户端 userId**：短期 HMAC token 绑定 `userId + clientId + 有效期`，验签身份通过
+  MCP transport context 注入工具。
+- **默认只允许本机**：`MCP_ALLOW_REMOTE=false`；公网或跨服务接入必须额外做 TLS、网络 ACL 和审计。
+- **固定 Schema**：`additionalProperties=false`，分页有上限；额外字段和越界参数不会进入业务查询。
+- **开关隔离**：`MCP_ENABLED=false` 时 MCP Bean 和 `/mcp` 端点都不注册，商城 API 不受影响。
+
+```bash
+# 本地签发短期 token（Windows PowerShell）
+$env:MCP_TOKEN_SECRET="<at-least-32-bytes>"
+.\scripts\mcp\issue-token.ps1 -UserId 93 -ClientId cursor-local -TtlSeconds 900
+
+# 两个独立 smoke client
+.\scripts\mcp\smoke.ps1 -UserId 93 -ClientId powershell-smoke
+python .\scripts\mcp\smoke_mcp.py --user-id 93 --client-id python-smoke
+```
+
+实现、兼容性边界、错误码、超时与回滚记录见
+[`docs/agent/PHASE-8-mcp.md`](./docs/agent/PHASE-8-mcp.md)。
 
 ---
 
@@ -398,16 +443,16 @@ AiUserContext aiUserContext() {
 | P6.1 | 体验 | 提示词事实约束 + H5 AI 导购页 |
 | P6.2 | 工程 | 对话历史落 ES + 配置映射 + 提议幂等修复 |
 | P7 | RAG | 政策知识库（6 篇文档）+ 检索工具 + 注入防护 + 29 条检索评测 100% |
+| P8 | MCP | Streamable HTTP + HMAC 短期身份 + 4 个只读工具 + 双客户端 smoke |
 
 **规划中**
 
 | 阶段 | 主题 | 目标 | 优先级 |
 |:--:|---|---|:--:|
-| P8 | 多模态 | 拍图搜同款、小票识别 | 中 |
 | P9 | 工程化放量 | 限流、审计、成本看板、离线评测集回归 | 高 |
-| P10 | 语义召回验证 | 向量 / 混合检索的代码已就绪（见 §2.6），缺真实 embedding 下的效果实测与阈值校准 | 中 |
-| P10 | MCP 化 | 把商城工具以 MCP Server 形式对外暴露，供其他 Agent 复用 | 中 |
-| P11 | 主动式 Agent | 到货 / 降价 / 库存回补提醒，事件驱动而非问答驱动 | 低 |
+| P10 | 多模态 | 拍图搜同款、小票识别 | 中 |
+| P11 | 语义召回验证 | 向量 / 混合检索的代码已就绪（见 §2.6），缺真实 embedding 下的效果实测与阈值校准 | 中 |
+| P12 | 主动式 Agent | 到货 / 降价 / 库存回补提醒，事件驱动而非问答驱动 | 低 |
 
 阶段定义、门禁与偏差登记在 [`docs/AGENT_INTEGRATION_SOP.md`](./docs/AGENT_INTEGRATION_SOP.md)，每个阶段的实测记录在 [`docs/agent/`](./docs/agent/)。
 
@@ -442,7 +487,7 @@ AiUserContext aiUserContext() {
 zeroai-mall
 ├── zeroai-admin-api              后台管理接口（81）+ 交易治理定时任务
 ├── zeroai-mobile-api             H5 / 移动端接口（82），AI 能力接入方
-├── zeroai-ai-starter             ★ AI Agent 通用能力（自动装配 / 工具 / SSE / 历史 SPI）
+├── zeroai-ai-starter             ★ AI Agent 能力（自动装配 / 工具 / SSE / 历史 SPI / MCP）
 ├── zeroai-common                 通用配置、切面、策略接口、基础设施
 ├── zeroai-domain-api             跨领域契约：实体、Mapper、Service 接口、VO、枚举
 ├── zeroai-domain-trade           订单、支付编排、状态机、本地消息、对账
@@ -464,6 +509,7 @@ zeroai-mall
 ├── db-init                       数据库初始化与增量治理 SQL
 ├── scripts/dev                   开发辅助脚本（灌数、验证码、占位图）
 ├── scripts/agent                 Agent 评测集与基线脚本
+├── scripts/mcp                   MCP token 签发与双客户端 smoke
 ├── docs                          方案、SOP、迁移手册、阶段记录
 └── docker-compose*.yml           本地或服务器编排脚本
 ```
@@ -473,7 +519,7 @@ zeroai-mall
 ```text
 zeroai-ai-starter/src/main/
 ├── java/com/zeroai/ai/
-│   ├── config/          配置项与自动装配（AiAgent / AiHistory）
+│   ├── config/          配置项与自动装配（AiAgent / AiHistory / Knowledge）
 │   ├── agent/           Agent 通道编排：建 Harness、事件映射、并发保护
 │   ├── harness/         工具面策略、可观测中间件、Harness 能力开关
 │   ├── mall/tool/       7 个商城工具（6 只读 + 1 提议）
@@ -482,6 +528,7 @@ zeroai-ai-starter/src/main/
 │   ├── memory/          跨会话记忆与写入安全校验
 │   ├── history/         对话历史 SPI：存档 / 查询 / 清空
 │   ├── prompt/          外置 Prompt 加载
+│   ├── mcp/             MCP Server、短期 token、固定只读工具白名单
 │   └── web/             SSE 端点、事件常量、历史接口、用户上下文 SPI
 └── resources/
     ├── prompts/         mall-agent-system.st（商城 Agent）/ guide-system.st（通用问答）
@@ -767,7 +814,8 @@ cd web/zeroai-admin  && npm install --legacy-peer-deps --no-audit && npm run dev
 - 交易、库存、支付、补偿、幂等逻辑必须补齐类注释、方法注释和关键分支注释。
 - 涉及 MyBatis-Plus Lambda Wrapper 的纯单测，需要初始化实体 `TableInfo` 缓存。
 - 默认不提交 `application*.yml` / `.env`；密钥只走环境变量。
-- **`zeroai-ai-starter` 禁止依赖任何业务模块**（`zeroai-domain-*`、`zeroai-common`）；业务能力通过工具注册反向注入。
+- **`zeroai-ai-starter` 禁止依赖具体领域实现模块**（`zeroai-domain-trade` / `goods` / `inventory` 等）；
+  商城工具只使用 `zeroai-domain-api` 契约，具体查询实现继续留在入口模块或领域模块。
 - **AI 工具一律先只读**。要新增写能力，必须走「提议表 + 独立确认接口」，不允许给 Agent 直接的写工具。
 - 启动类所在包会被组件扫描，starter 里的 `@RestController` 必须**重复声明** `@ConditionalOnProperty`，否则会绕过开关直接注册。
 - 改 Prompt 等同于改行为：`prompts/*.st` 的改动要连带跑一遍评测集。

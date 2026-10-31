@@ -21,6 +21,29 @@ spring:
     default-property-inclusion: non_null # 接口返回字段值为null的属性不展示
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: GMT+8
+  # P8 MCP Server：默认关闭。只读工具通过 /mcp 暴露，写工具永远不注册。
+  ai:
+    mcp:
+      server:
+        enabled: ${MCP_ENABLED:false}
+        name: zeroai-mall
+        version: 1.0.0
+        protocol: streamable
+        type: sync
+        request-timeout: 10s
+        instructions: >
+          这是 zeroai-mall 的只读 MCP 服务。只能查询在售商品、商品详情、
+          公开商城政策和当前 token 所属用户自己的订单。禁止尝试下单、支付、
+          退款、改地址、扣库存或查询其他用户数据。
+        capabilities:
+          tool: true
+          resource: false
+          prompt: false
+          completion: false
+        streamable-http:
+          mcp-endpoint: ${MCP_ENDPOINT:/mcp}
+          disallow-delete: true
+          keep-alive-interval: 30s
 # token配置
 token:
   # 令牌自定义标识
@@ -84,6 +107,16 @@ zeroai:
     max-history-turns: 8
     tool-timeout-ms: 3000
     degrade-on-error: true
+    # P8 MCP Server：与 AI 对话开关分离，只读工具不依赖模型调用。
+    # 默认仅允许本机访问；跨服务使用时必须经 TLS 反向代理、访问控制并显式打开 allow-remote。
+    mcp:
+      enabled: ${MCP_ENABLED:false}
+      token-secret: ${MCP_TOKEN_SECRET:}
+      token-header: Authorization
+      token-prefix: Bearer
+      max-token-ttl: 1h
+      clock-skew: 60s
+      allow-remote: ${MCP_ALLOW_REMOTE:false}
     # 写操作提议（Human-in-the-loop）：Agent 只能生成待确认提议，
     # 真正的订单写入必须由用户在页面上点确认后走独立接口
     action:
