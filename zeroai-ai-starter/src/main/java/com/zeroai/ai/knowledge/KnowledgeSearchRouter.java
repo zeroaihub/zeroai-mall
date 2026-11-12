@@ -138,7 +138,53 @@ public class KnowledgeSearchRouter implements KnowledgeSearchPort {
             log.warn("BM25 分支不可用，混合检索退化为纯向量：{}", describe(lexicalError));
             return semantic;
         }
+        if (log.isDebugEnabled()) {
+            // 阈值标定必须能看到两路各自的原始分：融合分是排名制的，不能反推余弦相似度
+            log.debug("混合检索 query=[{}] bm25={} vector={}", query, brief(lexical), brief(semantic));
+        }
+
+        // BM25 零命中意味着「没有任何字面证据」，此时向量是唯一证据，必须更强才算数。
+        // 不加这道门禁，0.55 的弱相关就能把库外问题凑成有答案（实测 3/6 条误报）。
+        if (lexical.isEmpty() && !semantic.isEmpty()) {
+            double gate = properties.getHybrid().getVectorOnlyMinScore();
+            if (gate > 0D) {
+                List<KnowledgeHit> confident = new ArrayList<>(semantic.size());
+                for (KnowledgeHit hit : semantic) {
+                    if (hit.score() >= gate) {
+                        confident.add(hit);
+                    }
+                }
+                if (confident.isEmpty()) {
+                    log.debug("混合检索两路均无可靠证据：bm25 零命中且向量最高分 {} 低于门禁 {}",
+                            String.format(java.util.Locale.ROOT, "%.3f", semantic.get(0).score()), gate);
+                    return List.of();
+                }
+                semantic = confident;
+            }
+        }
         return fuse(lexical, semantic, limit);
+    }
+
+    /**
+     * 把一路结果压成「sourceId:score」串，仅用于 DEBUG 日志。
+     *
+     * @param hits 命中列表
+     * @return 简短描述
+     */
+    private static String brief(List<KnowledgeHit> hits) {
+        if (hits == null || hits.isEmpty()) {
+            return "[]";
+        }
+        StringBuilder sb = new StringBuilder(64);
+        sb.append('[');
+        for (int i = 0; i < hits.size(); i++) {
+            KnowledgeHit hit = hits.get(i);
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(hit.sourceId()).append(':').append(String.format(java.util.Locale.ROOT, "%.3f", hit.score()));
+        }
+        return sb.append(']').toString();
     }
 
     /**

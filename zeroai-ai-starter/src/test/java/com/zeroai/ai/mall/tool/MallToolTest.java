@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -71,5 +73,50 @@ class MallToolTest {
     void stockToolShouldRejectNullSkuId() {
         String result = new StockStatusTool(null).getStockStatus(null);
         assertTrue(result.contains("MISSING_SKU_ID"));
+    }
+
+    // ---------- 单轮搜索预算：把「反复换关键词重试」变成确定性止损 ----------
+
+    @Test
+    void searchToolShouldStopAfterBudget() {
+        int[] calls = new int[1];
+        MallSearchPort port = (keyword, limit) -> {
+            calls[0]++;
+            return List.of();
+        };
+        SearchProductsTool tool = new SearchProductsTool(port, 2);
+
+        tool.searchProducts("手机", 5);
+        tool.searchProducts("平板", 5);
+        String third = tool.searchProducts("耳机", 5);
+
+        assertTrue(third.contains("SEARCH_BUDGET_EXCEEDED"), third);
+        assertEquals(2, calls[0], "超出预算后不得再访问检索服务，否则等于没止损");
+    }
+
+    @Test
+    void searchToolShouldHintStopWhenHitsAreFew() {
+        MallSearchPort empty = (keyword, limit) -> List.of();
+        assertTrue(new SearchProductsTool(empty).searchProducts("手机", 5).contains("命中很少"));
+
+        MallSearchPort single = (keyword, limit) -> List.of(
+                new MallSearchPort.GoodsBrief(1L, "只有一件", new BigDecimal("99.00"), 1, null));
+        assertTrue(new SearchProductsTool(single).searchProducts("手机", 5).contains("命中很少"));
+
+        MallSearchPort plenty = (keyword, limit) -> List.of(
+                new MallSearchPort.GoodsBrief(1L, "A", new BigDecimal("99.00"), 1, null),
+                new MallSearchPort.GoodsBrief(2L, "B", new BigDecimal("199.00"), 2, null));
+        assertFalse(new SearchProductsTool(plenty).searchProducts("手机", 5).contains("命中很少"));
+    }
+
+    @Test
+    void searchBudgetIsPerInstanceNotGlobal() {
+        // 工具按请求创建：预算必须随实例重置，否则第二个用户开局就被判定超限
+        MallSearchPort port = (keyword, limit) -> List.of();
+        new SearchProductsTool(port, 1).searchProducts("手机", 5);
+
+        String otherRequest = new SearchProductsTool(port, 1).searchProducts("手机", 5);
+
+        assertFalse(otherRequest.contains("SEARCH_BUDGET_EXCEEDED"), otherRequest);
     }
 }

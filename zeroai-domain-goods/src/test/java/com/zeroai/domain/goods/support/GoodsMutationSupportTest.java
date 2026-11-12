@@ -19,6 +19,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.List;
@@ -28,6 +29,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -152,6 +155,97 @@ class GoodsMutationSupportTest {
         GoodsProduct updatedProduct = productCaptor.getValue().iterator().next();
         assertNull(updatedProduct.getNumber());
         verify(goodsProductService).reduceStock(1000L, 4);
+    }
+
+    @Test
+    void updateGoodsRelatedSyncsIndexWithLatestGoodsFromDb() throws Exception {
+        GoodsElasticSyncSupport esSync = mock(GoodsElasticSyncSupport.class);
+        GoodsMutationSupport support = new GoodsMutationSupport(goodsMapper, goodsProductService, goodsAttributeService,
+                goodsSpecificationService, goodsValidationSupport, esSync, null);
+        GoodsSaveRelatedReqVO reqVO = emptyChildrenRequest(100L, "更新商品");
+
+        when(goodsValidationSupport.resolveRetailPrice(any())).thenReturn(new BigDecimal("19.90"));
+        stubEmptyExistingChildren();
+
+        Goods latest = new Goods();
+        latest.setId(100L);
+        latest.setName("更新商品");
+        when(goodsMapper.selectById(100L)).thenReturn(latest);
+
+        support.updateGoodsRelated(reqVO);
+
+        // 索引同步必须用数据库里重新查出来的对象，而不是入参拼出来的半成品
+        verify(esSync).syncGoods2Es(latest);
+    }
+
+    @Test
+    void saveGoodsRelatedSyncsIndexAfterInsert() throws Exception {
+        GoodsElasticSyncSupport esSync = mock(GoodsElasticSyncSupport.class);
+        GoodsMutationSupport support = new GoodsMutationSupport(goodsMapper, goodsProductService, goodsAttributeService,
+                goodsSpecificationService, goodsValidationSupport, esSync, null);
+        GoodsSaveRelatedReqVO reqVO = emptyChildrenRequest(300L, "新上架商品");
+
+        when(goodsValidationSupport.resolveRetailPrice(any())).thenReturn(new BigDecimal("9.90"));
+
+        Goods latest = new Goods();
+        latest.setId(300L);
+        latest.setName("新上架商品");
+        when(goodsMapper.selectById(300L)).thenReturn(latest);
+
+        support.saveGoodsRelated(reqVO);
+
+        verify(esSync).syncGoods2Es(latest);
+    }
+
+    @Test
+    void saveGoodsRelatedKeepsSavingWhenIndexSyncFails() throws Exception {
+        GoodsElasticSyncSupport esSync = mock(GoodsElasticSyncSupport.class);
+        GoodsMutationSupport support = new GoodsMutationSupport(goodsMapper, goodsProductService, goodsAttributeService,
+                goodsSpecificationService, goodsValidationSupport, esSync, null);
+        GoodsSaveRelatedReqVO reqVO = emptyChildrenRequest(400L, "索引故障商品");
+
+        when(goodsValidationSupport.resolveRetailPrice(any())).thenReturn(new BigDecimal("9.90"));
+        Goods latest = new Goods();
+        latest.setId(400L);
+        when(goodsMapper.selectById(400L)).thenReturn(latest);
+        doThrow(new IOException("es down")).when(esSync).syncGoods2Es(any());
+
+        // 索引故障不能反过来让商品保存失败
+        support.saveGoodsRelated(reqVO);
+
+        verify(goodsMapper).insert(any(Goods.class));
+    }
+
+    @Test
+    void deleteGoodsRelatedRemovesIndex() throws Exception {
+        GoodsElasticSyncSupport esSync = mock(GoodsElasticSyncSupport.class);
+        GoodsMutationSupport support = new GoodsMutationSupport(goodsMapper, goodsProductService, goodsAttributeService,
+                goodsSpecificationService, goodsValidationSupport, esSync, null);
+
+        support.deleteGoodsRelatedByGoodsId(500L);
+
+        verify(esSync).deleteGoodsFromEs(500L);
+    }
+
+    private GoodsSaveRelatedReqVO emptyChildrenRequest(Long goodsId, String name) {
+        GoodsSaveRelatedReqVO reqVO = new GoodsSaveRelatedReqVO();
+        GoodsVO goodsVO = new GoodsVO();
+        goodsVO.setId(goodsId);
+        goodsVO.setName(name);
+        reqVO.setGoods(goodsVO);
+        reqVO.setSpecifications(new GoodsSpecificationVO[0]);
+        reqVO.setAttributes(new GoodsAttributeVO[0]);
+        reqVO.setProducts(new GoodsProductVO[0]);
+        return reqVO;
+    }
+
+    private void stubEmptyExistingChildren() {
+        when(goodsSpecificationService.list(org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<GoodsSpecification>>any()))
+                .thenReturn(List.of());
+        when(goodsAttributeService.list(org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<GoodsAttribute>>any()))
+                .thenReturn(List.of());
+        when(goodsProductService.list(org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<GoodsProduct>>any()))
+                .thenReturn(List.of());
     }
 
     private GoodsSpecification toExistingSpec(Long id) {

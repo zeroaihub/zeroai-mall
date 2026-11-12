@@ -27,6 +27,29 @@ public class ActionProposalProperties {
      */
     private int maxItemsPerProposal = 10;
 
+    /**
+     * 确认时等待「消费端落单结果」的最长时间（毫秒）。
+     * <p>
+     * 下单是异步的：入口只投递消息，真正落库在消息消费端。
+     * 确认接口在这个窗口内轮询结果缓存，能拿到结果就把「已确认」或「失败原因」一次性告诉用户；
+     * 拿不到则保持「处理中」，由前端继续轮询提议状态。
+     * 设为 0 表示不等待，直接按「处理中」返回（测试里常用）。
+     */
+    private long resultWaitMs = 2000L;
+
+    /**
+     * 等待落单结果时的轮询间隔（毫秒）。太小会空转 Redis，太大则拖长确认耗时。
+     */
+    private long resultPollIntervalMs = 100L;
+
+    /**
+     * 「处理中」提议的兜底超时（秒）。
+     * <p>
+     * 结果缓存只有 60 秒生命周期，消费端彻底不工作时不会有任何结果写入；
+     * 超过该时间仍是 CONFIRMING 的提议按超时拒绝，避免前端永远转圈。
+     */
+    private long confirmTimeoutSeconds = 120L;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -49,5 +72,29 @@ public class ActionProposalProperties {
 
     public void setMaxItemsPerProposal(int maxItemsPerProposal) {
         this.maxItemsPerProposal = maxItemsPerProposal;
+    }
+
+    public long getResultWaitMs() {
+        return resultWaitMs;
+    }
+
+    public void setResultWaitMs(long resultWaitMs) {
+        this.resultWaitMs = resultWaitMs;
+    }
+
+    public long getResultPollIntervalMs() {
+        return resultPollIntervalMs;
+    }
+
+    public void setResultPollIntervalMs(long resultPollIntervalMs) {
+        this.resultPollIntervalMs = resultPollIntervalMs;
+    }
+
+    public long getConfirmTimeoutSeconds() {
+        return confirmTimeoutSeconds;
+    }
+
+    public void setConfirmTimeoutSeconds(long confirmTimeoutSeconds) {
+        this.confirmTimeoutSeconds = confirmTimeoutSeconds;
     }
 }

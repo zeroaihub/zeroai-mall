@@ -96,6 +96,8 @@ class ActionProposalServiceTest {
         properties = new ActionProposalProperties();
         properties.setEnabled(true);
         properties.setProposalTtlSeconds(600L);
+        // 测试里不真等：确认接口的「等待落单结果」窗口置 0，只做一次结果检查就返回
+        properties.setResultWaitMs(0L);
         service = new ActionProposalService(proposalMapper, cartService, goodsProductService,
                 couponService, addressService, mobileOrderService, properties);
         // 运费规则来自全局配置，测试里固定为「满 100 免运费，否则 10 元」
@@ -158,6 +160,66 @@ class ActionProposalServiceTest {
         assertEquals(ProposalRejectCode.ADDRESS_INVALID.getMessage(), ex.getMsg());
     }
 
+    // ---------- 创建提议：勾选状态是唯一的同意信号 ----------
+
+    @Test
+    @DisplayName("显式指定未勾选的商品时拒绝生成提议，并带上商品名")
+    void createRejectsUncheckedCartItem() throws Exception {
+        givenAddressOwned();
+        givenCartRow(10L, 30L, new BigDecimal("20.00"), 2, false);
+
+        ProposalValidationException ex = assertThrows(ProposalValidationException.class,
+                () -> service.createOrderProposal(USER_ID, 1L, null, List.of(10L)));
+
+        assertEquals(ProposalRejectCode.CART_NOT_CHECKED, ex.getCode());
+        assertTrue(ex.getDetail().contains("测试商品"), "明细要带上商品名，模型才能让用户去勾选");
+        verify(proposalMapper, never()).insert(org.mockito.ArgumentMatchers.<AiActionProposal>any());
+    }
+
+    @Test
+    @DisplayName("不传 cartIds 时只取已勾选商品，未勾选项不会混进提议")
+    void createWithoutCartIdsUsesCheckedOnly() throws Exception {
+        givenAddressOwned();
+        givenCartRow(10L, 30L, new BigDecimal("20.00"), 2, true);
+        when(proposalMapper.selectByIdempotencyKey(eq(USER_ID), anyString())).thenReturn(null);
+        when(proposalMapper.insert(org.mockito.ArgumentMatchers.<AiActionProposal>any())).thenReturn(1);
+
+        ProposalVO vo = service.createOrderProposal(USER_ID, 1L, null, null);
+
+        assertEquals(1, vo.items().size());
+        // 关键：查询条件里必须带 checked=true，否则等于把整张购物车都算进提议
+        org.mockito.ArgumentMatcher<com.baomidou.mybatisplus.core.conditions.Wrapper<Cart>> checkedOnly =
+                wrapper -> wrapper != null && wrapper.getSqlSegment().contains("checked");
+        verify(cartService).list(org.mockito.ArgumentMatchers.argThat(checkedOnly));
+    }
+
+    @Test
+    @DisplayName("cartIds 超过长度上限时直接拒绝，不查库")
+    void createRejectsOversizedCartIdList() throws Exception {
+        givenAddressOwned();
+        List<Long> tooMany = java.util.stream.LongStream.rangeClosed(1, 60).boxed().toList();
+
+        ProposalValidationException ex = assertThrows(ProposalValidationException.class,
+                () -> service.createOrderProposal(USER_ID, 1L, null, tooMany));
+
+        assertEquals(ProposalRejectCode.CART_CHANGED, ex.getCode());
+        verify(cartService, never()).list(org.mockito.ArgumentMatchers
+                .<com.baomidou.mybatisplus.core.conditions.Wrapper<Cart>>any());
+    }
+
+    @Test
+    @DisplayName("cartIds 里的商品已不在购物车时按内容变化拒绝")
+    void createRejectsMissingCartItem() throws Exception {
+        givenAddressOwned();
+        when(cartService.list(org.mockito.ArgumentMatchers
+                .<com.baomidou.mybatisplus.core.conditions.Wrapper<Cart>>any())).thenReturn(List.of());
+
+        ProposalValidationException ex = assertThrows(ProposalValidationException.class,
+                () -> service.createOrderProposal(USER_ID, 1L, null, List.of(10L)));
+
+        assertEquals(ProposalRejectCode.CART_CHANGED, ex.getCode());
+    }
+
     // ---------- 确认：成功 ----------
 
     @Test
@@ -170,15 +232,62 @@ class ActionProposalServiceTest {
         when(proposalMapper.claimPending(eq(PROPOSAL_NO), eq(USER_ID), any())).thenReturn(1);
         when(proposalMapper.selectByProposalNo(PROPOSAL_NO, USER_ID)).thenReturn(pending);
         when(mobileOrderService.asyncSubmit(any(), eq(USER_ID))).thenReturn(submitResult("SN-1", "50.00"));
+        // 消费端已回写落单成功
+        when(mobileOrderService.searchSubmitResult("SN-1")).thenReturn("success");
 
         ConfirmResVO res = service.confirm(USER_ID, PROPOSAL_NO);
 
         assertTrue(res.ok());
+        assertFalse(res.processing(), "拿到落单结果后不应再让前端等待");
         assertEquals("SN-1", res.orderSn());
         ArgumentCaptor<OrderCommitReqVO> captor = ArgumentCaptor.forClass(OrderCommitReqVO.class);
         verify(mobileOrderService, times(1)).asyncSubmit(captor.capture(), eq(USER_ID));
         assertEquals(pending.getAddressId(), captor.getValue().getAddressId());
+        // 订单号要在等结果之前先落库，等待超时后仍能回查
+        verify(proposalMapper).bindOrderSn(eq(pending.getId()), eq("SN-1"), any());
         verify(proposalMapper).markConfirmed(eq(pending.getId()), eq("SN-1"), any());
+    }
+
+    @Test
+    @DisplayName("消费端还没回结果时返回处理中，不谎报订单已创建")
+    void confirmReportsProcessingWhenNoResultYet() throws Exception {
+        givenAddressOwned();
+        givenCart(10L, 30L, new BigDecimal("20.00"), 2);
+        givenStock(30L, 10);
+        AiActionProposal pending = pendingProposal();
+        when(proposalMapper.claimPending(eq(PROPOSAL_NO), eq(USER_ID), any())).thenReturn(1);
+        when(proposalMapper.selectByProposalNo(PROPOSAL_NO, USER_ID)).thenReturn(pending);
+        when(mobileOrderService.asyncSubmit(any(), eq(USER_ID))).thenReturn(submitResult("SN-1", "50.00"));
+        when(mobileOrderService.searchSubmitResult("SN-1")).thenReturn(null);
+
+        ConfirmResVO res = service.confirm(USER_ID, PROPOSAL_NO);
+
+        assertTrue(res.ok(), "消息已入队，不算失败");
+        assertTrue(res.processing(), "必须显式告诉前端还没落库");
+        assertEquals("SN-1", res.orderSn());
+        // 关键：不能提前写 CONFIRMED，否则用户会拿到一个查不到的订单号
+        verify(proposalMapper, never()).markConfirmed(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("消费端落单失败时按具体原因拒绝，而不是报成功")
+    void confirmRejectsWhenConsumerFails() throws Exception {
+        givenAddressOwned();
+        givenCart(10L, 30L, new BigDecimal("20.00"), 2);
+        givenStock(30L, 10);
+        AiActionProposal pending = pendingProposal();
+        when(proposalMapper.claimPending(eq(PROPOSAL_NO), eq(USER_ID), any())).thenReturn(1);
+        when(proposalMapper.selectByProposalNo(PROPOSAL_NO, USER_ID)).thenReturn(pending);
+        when(mobileOrderService.asyncSubmit(any(), eq(USER_ID))).thenReturn(submitResult("SN-1", "50.00"));
+        when(mobileOrderService.searchSubmitResult("SN-1")).thenReturn("商品库存不足");
+
+        ConfirmResVO res = service.confirm(USER_ID, PROPOSAL_NO);
+
+        assertFalse(res.ok());
+        assertEquals(ProposalRejectCode.ORDER_SUBMIT_REJECTED.name(), res.failCode());
+        assertEquals("商品库存不足", res.message(), "消费端给的具体原因要原样透出");
+        verify(proposalMapper).markRejected(anyLong(), eq(ProposalRejectCode.ORDER_SUBMIT_REJECTED.name()), any());
+        verify(proposalMapper, never()).markConfirmed(any(), any(), any());
     }
 
     // ---------- 确认：重复与并发 ----------
@@ -194,6 +303,7 @@ class ActionProposalServiceTest {
         when(proposalMapper.claimPending(eq(PROPOSAL_NO), eq(USER_ID), any())).thenReturn(1, 0);
         when(proposalMapper.selectByProposalNo(PROPOSAL_NO, USER_ID)).thenReturn(pending);
         when(mobileOrderService.asyncSubmit(any(), eq(USER_ID))).thenReturn(submitResult("SN-1", "50.00"));
+        when(mobileOrderService.searchSubmitResult("SN-1")).thenReturn("success");
 
         ConfirmResVO first = service.confirm(USER_ID, PROPOSAL_NO);
         // 第二次时提议已是 CONFIRMED
@@ -221,6 +331,7 @@ class ActionProposalServiceTest {
         });
         when(proposalMapper.selectByProposalNo(PROPOSAL_NO, USER_ID)).thenReturn(pending);
         when(mobileOrderService.asyncSubmit(any(), eq(USER_ID))).thenReturn(submitResult("SN-1", "50.00"));
+        when(mobileOrderService.searchSubmitResult("SN-1")).thenReturn("success");
 
         ConfirmResVO winner = service.confirm(USER_ID, PROPOSAL_NO);
         pending.setStatus(ProposalStatus.CONFIRMING.name());
@@ -313,6 +424,44 @@ class ActionProposalServiceTest {
     }
 
     @Test
+    @DisplayName("提议生成后商品被取消勾选时拒绝确认，且不回滚成可重试")
+    void uncheckedAfterProposalIsRejected() throws Exception {
+        givenAddressOwned();
+        givenCartRow(10L, 30L, new BigDecimal("20.00"), 2, false);
+        givenStock(30L, 10);
+        when(proposalMapper.claimPending(eq(PROPOSAL_NO), eq(USER_ID), any())).thenReturn(1);
+        when(proposalMapper.selectByProposalNo(PROPOSAL_NO, USER_ID)).thenReturn(pendingProposal());
+
+        ConfirmResVO res = service.confirm(USER_ID, PROPOSAL_NO);
+
+        assertFalse(res.ok());
+        assertEquals(ProposalRejectCode.CART_NOT_CHECKED.name(), res.failCode());
+        verify(proposalMapper).markRejected(anyLong(), eq(ProposalRejectCode.CART_NOT_CHECKED.name()), any());
+        // 关键：不能落到 SUBMIT_RETRYABLE 分支，那会让用户以为「稍后重试」就能成功
+        verify(proposalMapper, never()).revertToPending(anyLong(), anyString(), any());
+        verify(mobileOrderService, never()).asyncSubmit(any(), anyLong());
+    }
+
+    @Test
+    @DisplayName("提议生成后购物车商品被删除时按内容变化拒绝，而不是可重试")
+    void deletedCartItemIsRejectedNotRetryable() throws Exception {
+        givenAddressOwned();
+        when(cartService.list(org.mockito.ArgumentMatchers
+                .<com.baomidou.mybatisplus.core.conditions.Wrapper<Cart>>any())).thenReturn(List.of());
+        givenStock(30L, 10);
+        when(proposalMapper.claimPending(eq(PROPOSAL_NO), eq(USER_ID), any())).thenReturn(1);
+        when(proposalMapper.selectByProposalNo(PROPOSAL_NO, USER_ID)).thenReturn(pendingProposal());
+
+        ConfirmResVO res = service.confirm(USER_ID, PROPOSAL_NO);
+
+        assertFalse(res.ok());
+        assertEquals(ProposalRejectCode.CART_CHANGED.name(), res.failCode());
+        verify(proposalMapper).markRejected(anyLong(), eq(ProposalRejectCode.CART_CHANGED.name()), any());
+        verify(proposalMapper, never()).revertToPending(anyLong(), anyString(), any());
+        verify(mobileOrderService, never()).asyncSubmit(any(), anyLong());
+    }
+
+    @Test
     @DisplayName("优惠券失效时拒绝确认")
     void invalidCouponIsRejected() throws Exception {
         givenAddressOwned();
@@ -401,6 +550,59 @@ class ActionProposalServiceTest {
         assertEquals(ProposalRejectCode.PROPOSAL_NOT_FOUND.getMessage(), ex.getMsg());
     }
 
+    @Test
+    @DisplayName("查询处理中提议时按落单结果补齐为已确认")
+    void getReconcilesConfirmingProposalToConfirmed() throws Exception {
+        AiActionProposal confirming = pendingProposal();
+        confirming.setStatus(ProposalStatus.CONFIRMING.name());
+        confirming.setOrderSn("SN-1");
+        confirming.setUpdateTime(LocalDateTime.now().minusSeconds(5));
+        when(proposalMapper.selectByProposalNo(PROPOSAL_NO, USER_ID)).thenReturn(confirming);
+        when(mobileOrderService.searchSubmitResult("SN-1")).thenReturn("success");
+
+        ProposalVO vo = service.get(USER_ID, PROPOSAL_NO);
+
+        assertEquals(ProposalStatus.CONFIRMED.name(), vo.status());
+        assertEquals("SN-1", vo.orderSn());
+        verify(proposalMapper).markConfirmed(eq(confirming.getId()), eq("SN-1"), any());
+    }
+
+    @Test
+    @DisplayName("处理中提议超过超时时间仍无结果时落盘为超时失败")
+    void getTimesOutStuckConfirmingProposal() throws Exception {
+        AiActionProposal confirming = pendingProposal();
+        confirming.setStatus(ProposalStatus.CONFIRMING.name());
+        confirming.setOrderSn("SN-1");
+        // 超过默认 120 秒的确认超时窗口
+        confirming.setUpdateTime(LocalDateTime.now().minusSeconds(200));
+        when(proposalMapper.selectByProposalNo(PROPOSAL_NO, USER_ID)).thenReturn(confirming);
+        when(mobileOrderService.searchSubmitResult("SN-1")).thenReturn(null);
+
+        ProposalVO vo = service.get(USER_ID, PROPOSAL_NO);
+
+        assertEquals(ProposalStatus.REJECTED.name(), vo.status());
+        assertEquals(ProposalRejectCode.CONFIRM_TIMEOUT.name(), vo.failCode());
+        verify(proposalMapper).markRejected(anyLong(), eq(ProposalRejectCode.CONFIRM_TIMEOUT.name()), any());
+        verify(proposalMapper, never()).markConfirmed(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("处理中提议在超时窗口内保持处理中，不误判失败")
+    void getKeepsConfirmingWithinTimeoutWindow() throws Exception {
+        AiActionProposal confirming = pendingProposal();
+        confirming.setStatus(ProposalStatus.CONFIRMING.name());
+        confirming.setOrderSn("SN-1");
+        confirming.setUpdateTime(LocalDateTime.now().minusSeconds(3));
+        when(proposalMapper.selectByProposalNo(PROPOSAL_NO, USER_ID)).thenReturn(confirming);
+        when(mobileOrderService.searchSubmitResult("SN-1")).thenReturn(null);
+
+        ProposalVO vo = service.get(USER_ID, PROPOSAL_NO);
+
+        assertEquals(ProposalStatus.CONFIRMING.name(), vo.status());
+        verify(proposalMapper, never()).markRejected(anyLong(), anyString(), any());
+        verify(proposalMapper, never()).markConfirmed(any(), any(), any());
+    }
+
     // ---------- 测试脚手架 ----------
 
     private void givenAddressOwned() {
@@ -411,6 +613,17 @@ class ActionProposalServiceTest {
     }
 
     private void givenCart(Long cartId, Long productId, BigDecimal unitPrice, Integer number) {
+        givenCartRow(cartId, productId, unitPrice, number, true);
+    }
+
+    /**
+     * 构造一行购物车数据。
+     * <p>
+     * {@code checked} 单独开一个参数，因为「未勾选商品能不能进提议」正是要断言的安全边界，
+     * 复用默认勾选的脚手架会把这条用例写成永远通过。
+     */
+    private void givenCartRow(Long cartId, Long productId, BigDecimal unitPrice, Integer number,
+                              boolean checked) {
         Cart cart = new Cart();
         cart.setId(cartId);
         cart.setGoodsId(20L);
@@ -418,7 +631,7 @@ class ActionProposalServiceTest {
         cart.setPrice(unitPrice);
         cart.setNumber(number);
         cart.setGoodsName("测试商品");
-        cart.setChecked(true);
+        cart.setChecked(checked);
         cart.setUserId(USER_ID.intValue());
         when(cartService.list(org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<Cart>>any()))
                 .thenReturn(List.of(cart));

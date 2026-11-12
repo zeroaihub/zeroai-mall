@@ -105,6 +105,17 @@ public class MobileOrderServiceImpl extends ServiceImpl<OrderMapper, Order> impl
     }
 
     /**
+     * 委托查询异步下单原始结果，未出结果时返回 null。
+     *
+     * @param orderSn 订单号
+     * @return success / 失败原因文本 / null
+     */
+    @Override
+    public String searchSubmitResult(String orderSn) {
+        return orderQuerySupport.searchSubmitResult(orderSn);
+    }
+
+    /**
      * 委托发起退款申请。
      *
      * @param orderId 订单 ID

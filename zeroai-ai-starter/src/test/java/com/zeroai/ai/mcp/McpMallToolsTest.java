@@ -126,14 +126,27 @@ class McpMallToolsTest {
         assertTrue(json.contains("测试商品"), "实际=" + json);
     }
 
+    @Test
+    @DisplayName("MCP 连续多次搜索不会耗尽单轮预算：计数必须按调用重置")
+    void searchBudgetShouldResetPerMcpCall() {
+        MallSearchPort port = (keyword, limit) -> List.of(
+                new MallSearchPort.GoodsBrief(9L, "测试商品", new BigDecimal("19.90"), 2, null));
+        McpMallTools tools = tools(port, mock(IMobileOrderService.class));
+
+        for (int i = 1; i <= 5; i++) {
+            String json = tools.searchProducts("测试", 5, authContext(3003L));
+            assertFalse(json.contains("SEARCH_BUDGET_EXCEEDED"),
+                    "第 " + i + " 次调用被单轮预算拦截，说明搜索工具实例被跨调用复用了：" + json);
+        }
+    }
+
     /**
      * 创建工具适配层。
      *
      * @param port   检索端口
      * @param orders 订单服务
      * @return MCP 工具
-     */
-    private static McpMallTools tools(MallSearchPort port, IMobileOrderService orders) {
+     */    private static McpMallTools tools(MallSearchPort port, IMobileOrderService orders) {
         return new McpMallTools(port, null, null, orders, new McpPrincipalResolver());
     }
 

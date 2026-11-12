@@ -114,7 +114,10 @@ public class ElasticDocument implements DisposableBean {
                 log.error(failure.reason(), failure.getCause());
             }
         }
-        return indexResponse.status().equals(RestStatus.OK);
+        // ES 对「新建文档」返回 201 CREATED、对「覆盖更新」返回 200 OK，两者都是成功；
+        // 只判 OK 会把新增商品误判成同步失败（文档已写入，却抛异常）
+        RestStatus status = indexResponse.status();
+        return status == RestStatus.OK || status == RestStatus.CREATED;
     }
 
 

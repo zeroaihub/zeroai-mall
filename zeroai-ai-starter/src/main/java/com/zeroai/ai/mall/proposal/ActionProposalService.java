@@ -1,5 +1,6 @@
 package com.zeroai.ai.mall.proposal;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.zeroai.ai.mall.proposal.entity.AiActionProposal;
 import com.zeroai.ai.mall.proposal.mapper.AiActionProposalMapper;
 import com.zeroai.ai.mall.proposal.vo.ConfirmResVO;
@@ -29,7 +30,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -46,6 +46,8 @@ import java.util.UUID;
  *       不复制订单创建、库存冻结或优惠计算逻辑。</li>
  *   <li>确认前逐项重校验：价格、数量、库存、优惠券、地址归属、提议过期与状态。
  *       任一不通过就拒绝确认，绝不「按新价先下单再解释」。</li>
+ *   <li><b>只认购物车勾选状态</b>：未勾选的商品无论如何都不能进入提议或订单，
+ *       哪怕模型在参数里显式点名了它——勾选框是用户唯一的显式同意信号。</li>
  *   <li>确认状态迁移依赖数据库条件更新（见 {@link AiActionProposalMapper}），
  *       并发双击下只有一个请求能真正触发下单。</li>
  * </ul>
@@ -58,6 +60,17 @@ public class ActionProposalService {
 
     /** 动作类型：创建订单。当前唯一支持的写操作提议。 */
     private static final String ACTION_CREATE_ORDER = "CREATE_ORDER";
+
+    /** 异步下单成功时消费端写入结果缓存的值，与 {@code SubmitOrderController} 保持一致。 */
+    private static final String SUBMIT_RESULT_SUCCESS = "success";
+
+    /**
+     * 消费端拒绝时写入的兜底文本。
+     * <p>
+     * {@code SubmitOrderController} 在拿不到业务异常文案时会写 "error"，
+     * 这种值对用户没有信息量，展示前必须换成原因码自带的文案。
+     */
+    private static final String SUBMIT_RESULT_UNKNOWN = "error";
 
     /** 提议编号长度（32 位十六进制短 UUID），足够不可枚举。 */
     private static final int PROPOSAL_NO_LENGTH = 32;
@@ -72,6 +85,14 @@ public class ActionProposalService {
 
     /** 快照行分隔符，与 {@link ProposalItem#toLine()} 保持一致。 */
     private static final String ITEM_LINE_SEPARATOR = "\n";
+
+    /**
+     * 显式指定购物车行数的硬上限。
+     * <p>
+     * 模型可能把一长串 ID（甚至重复几千个）塞进来，先做长度封顶再做 SQL：
+     * 否则 IN 条件会被撑爆，而「商品种类超限」这条业务校验要等查完库才生效。
+     */
+    private static final int MAX_CART_IDS = 50;
 
     /** 过期时间输出格式，前端可直接展示。 */
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
@@ -115,8 +136,10 @@ public class ActionProposalService {
      * @param userId      当前登录用户 ID，必须来自服务端鉴权
      * @param addressId   收货地址 ID
      * @param userCouponId 用户优惠券 ID，可为空
-     * @param cartIds     参与下单的购物车 ID；为空表示取该用户全部已勾选商品
+     * @param cartIds     参与下单的购物车 ID；为空表示取该用户全部已勾选商品，
+     *                    非空时每一项都必须属于本人且已勾选
      * @return 提议视图，含对外编号与价格摘要
+     * @throws ProposalValidationException 商品未勾选、不存在、行数据异常或 ID 列表过长
      */
     public ProposalVO createOrderProposal(Long userId, Long addressId, Long userCouponId, List<Long> cartIds) {
         if (userId == null) {
@@ -254,16 +277,43 @@ public class ActionProposalService {
             revalidate(proposal, userId);
         } catch (ProposalRejectedException e) {
             proposalMapper.markRejected(proposal.getId(), e.getCode().name(), LocalDateTime.now());
-            log.info("下单提议被拒绝 proposalNo={}, userId={}, reason={}", proposalNo, userId, e.getCode());
+            // detail 是定位问题的唯一线索：只说「购物车已变化」时，用户和支持都无从判断到底哪变了
+            log.info("下单提议被拒绝 proposalNo={}, userId={}, reason={}, detail={}",
+                    proposalNo, userId, e.getCode(), e.getDetail());
             return ConfirmResVO.failure(proposalNo, e.getCode());
         }
 
         try {
             SubmitOrderResVO resVO = submitThroughOrigin(proposal, userId);
-            proposalMapper.markConfirmed(proposal.getId(), resVO.getOrderSn(), LocalDateTime.now());
-            log.info("下单提议确认成功 proposalNo={}, userId={}, orderSn={}", proposalNo, userId, resVO.getOrderSn());
+            String orderSn = resVO.getOrderSn();
+            // 先落订单号：即便下面等待超时，后续查询也能拿它回查真实落单结果
+            proposalMapper.bindOrderSn(proposal.getId(), orderSn, LocalDateTime.now());
+
+            /*
+             * 原下单入口是异步的：它只做校验、算价、投递消息，订单由消息消费端落库。
+             * 所以「入口返回成功」只代表消息发出去了，不代表订单已经存在。
+             * 早期实现到这里就直接回「已下单」，消费端没启动时用户会拿到一个查不到的订单号，
+             * 这正是「点了确认却没生成订单」的成因。现在必须在等待窗口内拿到落库结果才算成功。
+             */
+            String outcome = awaitSubmitResult(orderSn);
+            if (outcome == null) {
+                log.info("下单提议确认处理中，消费端尚未回结果 proposalNo={}, userId={}, orderSn={}",
+                        proposalNo, userId, orderSn);
+                // 金额仍以原入口计算值为准；前端据此继续轮询提议状态
+                return ConfirmResVO.processing(proposalNo, orderSn, resVO.getActualPrice());
+            }
+            if (!SUBMIT_RESULT_SUCCESS.equals(outcome)) {
+                log.info("下单提议落单失败 proposalNo={}, userId={}, orderSn={}, outcome={}",
+                        proposalNo, userId, orderSn, outcome);
+                proposalMapper.markRejected(proposal.getId(),
+                        ProposalRejectCode.ORDER_SUBMIT_REJECTED.name(), LocalDateTime.now());
+                return ConfirmResVO.failure(proposalNo, ProposalRejectCode.ORDER_SUBMIT_REJECTED,
+                        meaningfulResult(outcome, ProposalRejectCode.ORDER_SUBMIT_REJECTED.getMessage()));
+            }
+            proposalMapper.markConfirmed(proposal.getId(), orderSn, LocalDateTime.now());
+            log.info("下单提议确认成功 proposalNo={}, userId={}, orderSn={}", proposalNo, userId, orderSn);
             // 原入口返回的金额才是权威值：若与快照不一致说明运费/优惠规则有变，如实下发
-            return ConfirmResVO.success(proposalNo, resVO.getOrderSn(), resVO.getActualPrice());
+            return ConfirmResVO.success(proposalNo, orderSn, resVO.getActualPrice());
         } catch (BusinessException e) {
             // 原下单入口的业务拒绝（购物车为空、优惠券不满足等）：提议已过时，必须重新生成
             log.info("原下单入口拒绝 proposalNo={}, userId={}, msg={}", proposalNo, userId, e.getMsg());
@@ -305,7 +355,124 @@ public class ActionProposalService {
             proposal.setStatus(ProposalStatus.EXPIRED.name());
             proposal.setFailCode(ProposalRejectCode.EXPIRED.name());
         }
+        // 惰性回收：卡在「处理中」的提议在查询时补齐最终状态，前端轮询这里就能拿到答案
+        if (ProposalStatus.CONFIRMING.name().equals(proposal.getStatus())) {
+            reconcileConfirming(proposal);
+        }
         return toView(proposal);
+    }
+
+    /**
+     * 回收「处理中」提议的最终状态。
+     * <p>
+     * 确认接口等待窗口内没拿到落单结果时，提议会停在 CONFIRMING。
+     * 这里按订单号回查结果缓存，把状态补齐成 CONFIRMED / REJECTED；
+     * 结果缓存过期（60 秒）后仍无结果，说明消费端根本没工作，按超时拒绝并如实提示。
+     * <p>
+     * 本方法只读结果缓存并做条件更新，<b>不会触发任何下单动作</b>，可在查询接口里安全调用。
+     *
+     * @param proposal 当前提议，方法内会同步更新其状态字段
+     */
+    private void reconcileConfirming(AiActionProposal proposal) {
+        String orderSn = proposal.getOrderSn();
+        if (orderSn == null || orderSn.isBlank()) {
+            // 没拿到订单号说明入口在投递前就中断了，交给下面的超时兜底
+            applyConfirmTimeout(proposal);
+            return;
+        }
+        String outcome;
+        try {
+            outcome = mobileOrderService.searchSubmitResult(orderSn);
+        } catch (RuntimeException e) {
+            // 查询结果失败不能连带让用户看不到提议，保持 CONFIRMING 等下次轮询
+            log.warn("回查下单结果失败 proposalNo={}, orderSn={}", proposal.getProposalNo(), orderSn, e);
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (SUBMIT_RESULT_SUCCESS.equals(outcome)) {
+            proposalMapper.markConfirmed(proposal.getId(), orderSn, now);
+            proposal.setStatus(ProposalStatus.CONFIRMED.name());
+            proposal.setConfirmTime(now);
+            return;
+        }
+        if (outcome != null) {
+            proposalMapper.markRejected(proposal.getId(),
+                    ProposalRejectCode.ORDER_SUBMIT_REJECTED.name(), now);
+            proposal.setStatus(ProposalStatus.REJECTED.name());
+            proposal.setFailCode(ProposalRejectCode.ORDER_SUBMIT_REJECTED.name());
+            proposal.setConfirmTime(now);
+            return;
+        }
+        applyConfirmTimeout(proposal);
+    }
+
+    /**
+     * 处理中提议的超时兜底：超过配置时间仍无结果就落盘 REJECTED。
+     *
+     * @param proposal 当前提议，方法内会同步更新其状态字段
+     */
+    private void applyConfirmTimeout(AiActionProposal proposal) {
+        LocalDateTime since = proposal.getUpdateTime();
+        if (since == null) {
+            return;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (since.plusSeconds(properties.getConfirmTimeoutSeconds()).isAfter(now)) {
+            return;
+        }
+        proposalMapper.markRejected(proposal.getId(), ProposalRejectCode.CONFIRM_TIMEOUT.name(), now);
+        proposal.setStatus(ProposalStatus.REJECTED.name());
+        proposal.setFailCode(ProposalRejectCode.CONFIRM_TIMEOUT.name());
+        proposal.setConfirmTime(now);
+        log.warn("下单提议确认超时 proposalNo={}, orderSn={}", proposal.getProposalNo(), proposal.getOrderSn());
+    }
+
+    /**
+     * 在有限窗口内等待消费端写回落单结果。
+     * <p>
+     * 为什么值得同步等一下：确认是用户点了按钮的强交互，能当场给出「已创建 / 具体失败原因」
+     * 远好过让前端再猜。窗口很短（默认 2 秒），实测落单在百毫秒级；超时就转成「处理中」。
+     *
+     * @param orderSn 订单号
+     * @return success / 失败原因文本 / null（窗口内没有结果）
+     */
+    private String awaitSubmitResult(String orderSn) {
+        if (orderSn == null || orderSn.isBlank()) {
+            return null;
+        }
+        long waitMs = Math.max(0L, properties.getResultWaitMs());
+        long intervalMs = Math.max(20L, properties.getResultPollIntervalMs());
+        long deadline = System.currentTimeMillis() + waitMs;
+        while (true) {
+            String outcome = mobileOrderService.searchSubmitResult(orderSn);
+            if (outcome != null) {
+                return outcome;
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                return null;
+            }
+            try {
+                Thread.sleep(intervalMs);
+            } catch (InterruptedException e) {
+                // 保留中断标记：请求线程被取消时应尽快退出，不要继续等
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+    }
+
+    /**
+     * 把消费端写回的原始文本转成可展示文案。
+     *
+     * @param outcome       原始结果文本
+     * @param fallbackText  没有有效文本时的兜底文案
+     * @return 可展示文案
+     */
+    private static String meaningfulResult(String outcome, String fallbackText) {
+        if (outcome == null || outcome.isBlank() || SUBMIT_RESULT_UNKNOWN.equals(outcome)) {
+            return fallbackText;
+        }
+        return outcome;
     }
 
     /**
@@ -365,25 +532,39 @@ public class ActionProposalService {
         // 2) 地址仍属于本人
         Address address = addressService.getById(proposal.getAddressId());
         if (address == null || !Objects.equals(address.getMemberId(), userId)) {
-            throw new ProposalRejectedException(ProposalRejectCode.ADDRESS_INVALID);
+            throw new ProposalRejectedException(ProposalRejectCode.ADDRESS_INVALID,
+                    "addressId=" + proposal.getAddressId());
         }
 
         // 3) 购物车实时数据与快照逐项比对：价格、数量任一变化都拒绝，绝不按新价下单
         List<Long> cartIds = parseIds(proposal.getCartIds());
-        List<Cart> liveCarts = resolveCarts(userId, cartIds);
+        List<Cart> liveCarts;
+        try {
+            liveCarts = resolveCarts(userId, cartIds);
+        } catch (ProposalValidationException e) {
+            /*
+             * 提议生成后商品被删除、或用户主动取消勾选：按「内容已变化」拒绝，
+             * 让用户重新生成提议。这里不能落到外层 RuntimeException 分支——
+             * 那个分支会回滚成 PENDING 并提示「稍后重试」，而重试一万次结果都一样。
+             */
+            throw new ProposalRejectedException(e.getCode(), e.getDetail());
+        }
         List<ProposalItem> liveItems = toItems(liveCarts);
         if (liveItems.size() != snapshot.size()) {
-            throw new ProposalRejectedException(ProposalRejectCode.CART_CHANGED);
+            throw new ProposalRejectedException(ProposalRejectCode.CART_CHANGED,
+                    "快照 " + snapshot.size() + " 行，实时 " + liveItems.size() + " 行");
         }
         for (int i = 0; i < snapshot.size(); i++) {
             ProposalItem before = snapshot.get(i);
             ProposalItem after = liveItems.get(i);
             if (!Objects.equals(before.productId(), after.productId())
                     || !Objects.equals(before.number(), after.number())) {
-                throw new ProposalRejectedException(ProposalRejectCode.CART_CHANGED);
+                throw new ProposalRejectedException(ProposalRejectCode.CART_CHANGED,
+                        "第 " + (i + 1) + " 行 快照=" + before + " 实时=" + after);
             }
             if (before.unitPrice().compareTo(after.unitPrice()) != 0) {
-                throw new ProposalRejectedException(ProposalRejectCode.PRICE_CHANGED);
+                throw new ProposalRejectedException(ProposalRejectCode.PRICE_CHANGED,
+                        "第 " + (i + 1) + " 行 快照价=" + before.unitPrice() + " 实时价=" + after.unitPrice());
             }
         }
 
@@ -392,7 +573,8 @@ public class ActionProposalService {
             GoodsProduct sku = goodsProductService.getById(item.productId());
             int available = sku == null || sku.getNumber() == null ? 0 : sku.getNumber();
             if (available < item.number()) {
-                throw new ProposalRejectedException(ProposalRejectCode.STOCK_INSUFFICIENT);
+                throw new ProposalRejectedException(ProposalRejectCode.STOCK_INSUFFICIENT,
+                        "productId=" + item.productId() + " 可售=" + available + " 需要=" + item.number());
             }
         }
 
@@ -400,7 +582,9 @@ public class ActionProposalService {
         PriceSummary live = calculatePrice(liveItems, proposal.getUserCouponId(), userId);
         if (live.actualPrice().compareTo(proposal.getActualPrice()) != 0
                 || live.couponPrice().compareTo(proposal.getCouponPrice()) != 0) {
-            throw new ProposalRejectedException(ProposalRejectCode.PRICE_CHANGED);
+            throw new ProposalRejectedException(ProposalRejectCode.PRICE_CHANGED,
+                    "快照应付=" + proposal.getActualPrice() + " 实时应付=" + live.actualPrice()
+                            + " 快照优惠=" + proposal.getCouponPrice() + " 实时优惠=" + live.couponPrice());
         }
     }
 
@@ -428,32 +612,101 @@ public class ActionProposalService {
     }
 
     /**
-     * 解析本次下单使用的购物车商品，必须全部属于当前用户。
+     * 解析本次下单使用的购物车商品。
+     * <p>
+     * <b>这里是「未勾选商品混进订单」的唯一确定性拦截点。</b>三条规则缺一不可：
+     * <ol>
+     *   <li>不传 cartIds 时只取 {@code checked=true}——用户没点名商品，就完全按勾选框来；</li>
+     *   <li>传了 cartIds 时，每一项都必须属于当前用户<b>且已勾选</b>。
+     *       模型可能从历史对话里记住「用户想买保护壳」，而保护壳在购物车里并未勾选；
+     *       勾选框是用户唯一的显式同意信号，服务端不认模型的推断，
+     *       发现未勾选直接拒绝并回传商品名，让模型引导用户去勾选；</li>
+     *   <li>行数据本身必须可下单（单价非空、数量为正），否则快照与金额计算会失真。</li>
+     * </ol>
      *
      * @param userId  当前用户 ID
      * @param cartIds 购物车 ID；为空表示取全部已勾选
      * @return 购物车列表
+     * @throws ProposalValidationException 选择无效、归属不符、未勾选或行数据不可下单
      */
     private List<Cart> resolveCarts(Long userId, List<Long> cartIds) {
+        List<Long> requested = normalizeCartIds(cartIds);
         List<Cart> carts;
-        if (cartIds == null || cartIds.isEmpty()) {
-            carts = cartService.list(com.baomidou.mybatisplus.core.toolkit.Wrappers.lambdaQuery(Cart.class)
+        if (requested.isEmpty()) {
+            carts = cartService.list(Wrappers.lambdaQuery(Cart.class)
                     .eq(Cart::getChecked, true)
                     .eq(Cart::getUserId, userId));
         } else {
-            List<Long> distinct = new LinkedHashSet<>(cartIds).stream().toList();
-            carts = cartService.list(com.baomidou.mybatisplus.core.toolkit.Wrappers.lambdaQuery(Cart.class)
+            carts = cartService.list(Wrappers.lambdaQuery(Cart.class)
                     .eq(Cart::getUserId, userId)
-                    .in(Cart::getId, distinct));
-            if (carts.size() != distinct.size()) {
+                    .in(Cart::getId, requested));
+            if (carts == null || carts.size() != requested.size()) {
                 // 数量不一致说明存在越权、失效或已删除购物车项，必须中断而不是部分下单
-                throw new BusinessException(ProposalRejectCode.CART_CHANGED.getMessage());
+                throw new ProposalValidationException(ProposalRejectCode.CART_CHANGED,
+                        "部分商品不在购物车中或已被删除");
+            }
+            List<Cart> unchecked = carts.stream()
+                    .filter(cart -> !Boolean.TRUE.equals(cart.getChecked()))
+                    .toList();
+            if (!unchecked.isEmpty()) {
+                throw new ProposalValidationException(ProposalRejectCode.CART_NOT_CHECKED,
+                        "未勾选：" + namesOf(unchecked));
             }
         }
         if (carts == null || carts.isEmpty()) {
-            throw new BusinessException(ProposalRejectCode.CART_CHANGED.getMessage());
+            throw new ProposalValidationException(ProposalRejectCode.CART_CHANGED,
+                    "购物车没有已勾选的商品");
+        }
+        for (Cart cart : carts) {
+            boolean orderable = cart.getId() != null && cart.getPrice() != null
+                    && cart.getNumber() != null && cart.getNumber() > 0;
+            if (!orderable) {
+                // 价格或数量为空的脏数据不能进入快照：算出来的金额一定是错的
+                throw new ProposalValidationException(ProposalRejectCode.CART_CHANGED,
+                        "购物车商品数据异常，请重新加入购物车");
+            }
         }
         return carts;
+    }
+
+    /**
+     * 规整显式传入的购物车 ID：过滤 null、去重、封顶。
+     *
+     * @param cartIds 原始入参，可为 null
+     * @return 可直接用于 IN 查询的 ID 列表；入参为空时返回空列表
+     */
+    private static List<Long> normalizeCartIds(List<Long> cartIds) {
+        if (cartIds == null || cartIds.isEmpty()) {
+            return List.of();
+        }
+        List<Long> distinct = cartIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (distinct.size() > MAX_CART_IDS) {
+            throw new ProposalValidationException(ProposalRejectCode.CART_CHANGED,
+                    "一次最多提交 " + MAX_CART_IDS + " 种商品");
+        }
+        return distinct;
+    }
+
+    /**
+     * 把购物车行拼成可读的商品名列表，供模型向用户复述。名称过长时截断，避免回灌占满上下文。
+     *
+     * @param carts 购物车行
+     * @return 以顿号连接的名称，最多 5 个，其余以「等 N 件」收尾
+     */
+    private static String namesOf(List<Cart> carts) {
+        int limit = 5;
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < carts.size() && i < limit; i++) {
+            if (sb.length() > 0) {
+                sb.append('、');
+            }
+            String name = carts.get(i).getGoodsName();
+            sb.append(name == null || name.isBlank() ? "未命名商品" : name);
+        }
+        if (carts.size() > limit) {
+            sb.append(" 等 ").append(carts.size()).append(" 件");
+        }
+        return sb.toString();
     }
 
     /**
@@ -732,18 +985,32 @@ public class ActionProposalService {
 
     /**
      * 内部异常：表示「业务重校验失败，应拒绝确认」，不暴露给调用方。
+     * <p>
+     * {@code detail} 只用于日志：它对定位「到底哪一项变了」很关键，
+     * 但不能回给用户（里面带价格、商品 ID 等内部信息）。
      */
     private static final class ProposalRejectedException extends RuntimeException {
 
         private final transient ProposalRejectCode code;
 
+        private final transient String detail;
+
         private ProposalRejectedException(ProposalRejectCode code) {
+            this(code, null);
+        }
+
+        private ProposalRejectedException(ProposalRejectCode code, String detail) {
             super(code.getMessage());
             this.code = code;
+            this.detail = detail;
         }
 
         private ProposalRejectCode getCode() {
             return code;
+        }
+
+        private String getDetail() {
+            return detail == null ? "-" : detail;
         }
     }
 }

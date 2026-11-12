@@ -54,6 +54,19 @@ public interface IMobileOrderService extends IService<Order> {
     String searchResult(String orderSn);
 
     /**
+     * 查询异步下单的<b>原始</b>结果，未出结果时返回 {@code null}。
+     * <p>
+     * 与 {@link #searchResult(String)} 的差别只有一点，但很关键：
+     * 后者把「消费端还没有回结果」直接当成「下单失败」，
+     * 调用方无法区分「还没处理完」和「处理了但是失败了」。
+     * 确认类入口需要这个区分：没结果就继续等，明确失败才拒绝。
+     *
+     * @param orderSn 订单编号
+     * @return {@code success} / 失败原因文本 / {@code null}（尚未产生结果）
+     */
+    String searchSubmitResult(String orderSn);
+
+    /**
      * 订单退款
      * <p>
      * 1. 检测当前订单是否可以退款；

@@ -59,14 +59,14 @@
     <el-row :gutter="10" class="mb8">
       <el-col :span="1.5">
         <el-button
-          v-hasPermi="['system:goods:add']"
+          v-hasPermi="['shop:goods:add']"
           type="primary"
           icon="Plus"
           size="small"
           @click="handleAdd()"
         >新增</el-button>
         <el-button
-          v-hasPermi="['system:goods:syncEs']"
+          v-hasPermi="['shop:goods:syncEs']"
           type="success"
           icon="Position"
           size="small"
@@ -151,14 +151,14 @@
       >
         <template #default="scope">
           <el-button
-            v-hasPermi="['system:goods:update']"
+            v-hasPermi="['shop:goods:update']"
             size="small"
             type="text"
             icon="Edit"
             @click="handleUpdate(scope.row)"
           >修改</el-button>
           <el-button
-            v-hasPermi="['system:goods:delete']"
+            v-hasPermi="['shop:goods:delete']"
             size="small"
             type="text"
             icon="Delete"

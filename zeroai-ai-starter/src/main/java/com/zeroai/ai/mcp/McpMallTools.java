@@ -29,7 +29,8 @@ public class McpMallTools {
     private static final String TOOL_UNAVAILABLE_JSON =
             "{\"error\":\"MCP_TOOL_UNAVAILABLE\",\"hint\":\"服务暂时不可用，请稍后再试\"}";
 
-    private final SearchProductsTool searchProductsTool;
+    /** 商品检索端口。搜索工具按调用新建，这里只保留端口（见 {@code searchProducts}）。 */
+    private final MallSearchPort searchPort;
     private final GoodsDetailTool goodsDetailTool;
     private final SearchKnowledgeTool searchKnowledgeTool;
     private final IMobileOrderService mobileOrderService;
@@ -47,7 +48,7 @@ public class McpMallTools {
                         KnowledgeService knowledgeService,
                         IMobileOrderService mobileOrderService,
                         McpPrincipalResolver principalResolver) {
-        this.searchProductsTool = new SearchProductsTool(searchPort);
+        this.searchPort = searchPort;
         this.goodsDetailTool = new GoodsDetailTool(goodsDetailService);
         this.searchKnowledgeTool = new SearchKnowledgeTool(knowledgeService);
         this.mobileOrderService = mobileOrderService;
@@ -64,7 +65,12 @@ public class McpMallTools {
      */
     public String searchProducts(String keyword, Integer limit, ToolContext toolContext) {
         return execute(McpToolNames.SEARCH_PRODUCTS, toolContext,
-                principal -> searchProductsTool.searchProducts(keyword, limit));
+                /*
+                 * MCP 一次调用就是一轮：按调用新建工具实例。
+                 * 搜索工具内部记着「本轮已搜几次」，本类却是单例 Bean——
+                 * 复用同一个实例会让计数跨客户端、跨会话累计，三次之后全站搜索永久失效。
+                 */
+                principal -> new SearchProductsTool(searchPort).searchProducts(keyword, limit));
     }
 
     /**

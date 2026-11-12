@@ -186,7 +186,20 @@ public class OrderQuerySupport {
      */
     public String searchResult(String orderSn) {
         // 下单结果由异步消费端写入 Redis，查询端只负责读取和兜底返回。
-        String value = redisCache.getCacheObject(ORDER_RESULT_KEY.getKey(orderSn));
+        String value = searchSubmitResult(orderSn);
         return value == null ? ORDER_SUBMIT_ERROR_MSG : value;
+    }
+
+    /**
+     * 查询异步下单的原始结果，未出结果时返回 {@code null}。
+     * <p>
+     * 结果缓存由消费端在真正落单（或落单失败）后写入，且只有 60 秒生命周期；
+     * 这里刻意不做兜底文案填充，让调用方能区分「还没结果」和「明确失败」。
+     *
+     * @param orderSn 订单号
+     * @return success / 失败原因文本 / null（尚未产生结果）
+     */
+    public String searchSubmitResult(String orderSn) {
+        return redisCache.getCacheObject(ORDER_RESULT_KEY.getKey(orderSn));
     }
 }

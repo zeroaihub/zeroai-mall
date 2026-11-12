@@ -18,9 +18,12 @@ import com.zeroai.domain.api.goods.request.GoodsSaveRelatedReqVO;
 import com.zeroai.data.redis.manager.RedisCache;
 import com.zeroai.util.enums.ReturnCodeEnum;
 import com.zeroai.util.exception.BusinessException;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -40,6 +43,7 @@ import static com.zeroai.data.redis.constant.RedisKeyEnum.GOODS_DETAIL_CACHE;
  * 商品写路径支撑服务。
  * 统一处理商品主表与规格、属性、货品等聚合数据的事务写入，并负责更新时的增删改对账。
  */
+@Slf4j
 @Service
 public class GoodsMutationSupport {
 
@@ -139,6 +143,7 @@ public class GoodsMutationSupport {
         saveBatchIfPresent(attributes, goodsAttributeService::saveBatch);
         saveBatchIfPresent(products, goodsProductService::saveBatch);
         evictGoodsDetailCache(goods.getId());
+        syncGoodsIndexAfterCommit(goods.getId());
     }
 
     /**
@@ -154,9 +159,8 @@ public class GoodsMutationSupport {
         goodsSpecificationService.remove(new QueryWrapper<GoodsSpecification>().eq("goods_id", goodsId));
         goodsAttributeService.remove(new QueryWrapper<GoodsAttribute>().eq("goods_id", goodsId));
         goodsProductService.remove(new QueryWrapper<GoodsProduct>().eq("goods_id", goodsId));
-        if (goodsElasticSyncSupport != null) {
-            goodsElasticSyncSupport.deleteGoodsFromEs(goodsId);
-        }
+        // 删除同步也放到事务提交之后：事务回滚时索引里的文档必须保留，否则商品会「搜不到但还在」
+        runAfterCommit(() -> deleteGoodsIndex(goodsId));
         evictGoodsDetailCache(goodsId);
         return true;
     }
@@ -187,6 +191,7 @@ public class GoodsMutationSupport {
         syncAttributes(goods.getId(), attributes);
         syncProducts(goods.getId(), products);
         evictGoodsDetailCache(goods.getId());
+        syncGoodsIndexAfterCommit(goods.getId());
     }
 
     /**
@@ -210,6 +215,80 @@ public class GoodsMutationSupport {
         if (redisCache != null && goodsId != null) {
             redisCache.deleteObject(GOODS_DETAIL_CACHE.getKey(goodsId));
         }
+    }
+
+    /**
+     * 事务提交后同步商品索引。
+     * <p>
+     * 商品写路径（新增 / 修改 / 上下架）必须让搜索索引跟上，否则会出现
+     * 「运营后台已上架、H5 与 AI 助手却搜不到」。同步刻意放在提交之后：
+     * 事务回滚时不能把未生效的数据写进索引；同步失败只记日志，
+     * 不能让索引故障反过来导致商品保存失败。
+     *
+     * @param goodsId 商品 ID
+     */
+    private void syncGoodsIndexAfterCommit(Long goodsId) {
+        if (goodsId == null) {
+            return;
+        }
+        runAfterCommit(() -> syncGoodsIndex(goodsId));
+    }
+
+    /**
+     * 执行单商品索引同步。
+     * 以数据库为准重新读取一次，避免用入参对象拼装出缺少销量、货品价的文档。
+     *
+     * @param goodsId 商品 ID
+     */
+    private void syncGoodsIndex(Long goodsId) {
+        if (goodsElasticSyncSupport == null) {
+            return;
+        }
+        try {
+            Goods latest = goodsMapper.selectById(goodsId);
+            if (latest == null) {
+                // 提交后被并发删除：索引里不能留下残影
+                goodsElasticSyncSupport.deleteGoodsFromEs(goodsId);
+                return;
+            }
+            goodsElasticSyncSupport.syncGoods2Es(latest);
+        } catch (Exception e) {
+            log.warn("商品索引同步失败，商品已保存但搜索结果可能不同步, goodsId={}", goodsId, e);
+        }
+    }
+
+    /**
+     * 删除商品索引，失败只记日志。
+     *
+     * @param goodsId 商品 ID
+     */
+    private void deleteGoodsIndex(Long goodsId) {
+        if (goodsElasticSyncSupport == null) {
+            return;
+        }
+        try {
+            goodsElasticSyncSupport.deleteGoodsFromEs(goodsId);
+        } catch (Exception e) {
+            log.warn("商品索引删除失败，索引中可能残留已删除商品, goodsId={}", goodsId, e);
+        }
+    }
+
+    /**
+     * 有事务时注册提交后回调，无事务（如单元测试直接调用）时立即执行。
+     *
+     * @param action 待执行动作
+     */
+    private void runAfterCommit(Runnable action) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    action.run();
+                }
+            });
+            return;
+        }
+        action.run();
     }
 
     /**

@@ -95,6 +95,15 @@ public class AiAgentProperties {
     private Integer maxToolCallsPerTurn = 6;
 
     /**
+     * 单轮内 {@code search_products} 的调用次数上限。
+     * <p>
+     * 与 {@link #maxSteps} 分开：步数上限是「整体刹车」，这个只针对检索。
+     * 基线里模型遇到稀疏结果会连续换关键词重试（一次单轮搜了 5 次），
+     * 把步数顶满、token 翻倍，答案却没变好。3 次足够覆盖「换一个词再试」的正常需求。
+     */
+    private Integer maxSearchesPerTurn = 3;
+
+    /**
      * 进入上下文的历史轮数。
      */
     private Integer maxHistoryTurns = 8;
@@ -227,6 +236,14 @@ public class AiAgentProperties {
 
     public void setMaxToolCallsPerTurn(Integer maxToolCallsPerTurn) {
         this.maxToolCallsPerTurn = maxToolCallsPerTurn;
+    }
+
+    public Integer getMaxSearchesPerTurn() {
+        return maxSearchesPerTurn;
+    }
+
+    public void setMaxSearchesPerTurn(Integer maxSearchesPerTurn) {
+        this.maxSearchesPerTurn = maxSearchesPerTurn;
     }
 
     public Integer getMaxHistoryTurns() {

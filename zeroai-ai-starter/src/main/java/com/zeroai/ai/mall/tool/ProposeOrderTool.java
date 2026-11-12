@@ -1,10 +1,12 @@
 package com.zeroai.ai.mall.tool;
 
 import com.zeroai.ai.mall.proposal.ActionProposalService;
+import com.zeroai.ai.mall.proposal.ProposalValidationException;
 import com.zeroai.ai.mall.proposal.vo.ProposalVO;
 import com.zeroai.util.exception.BusinessException;
 import io.agentscope.core.tool.Tool;
 
+import java.util.List;
 import java.util.function.Consumer;
 
 /**
@@ -18,6 +20,10 @@ import java.util.function.Consumer;
  * userId 在构造时由服务端注入，模型无法指定他人身份。
  */
 public class ProposeOrderTool {
+
+    /** 随提议一起回传给模型的固定提示：确认语义与「不许增删商品」。 */
+    private static final String CONFIRM_HINT =
+            "这只是提议，需要用户确认后才会创建订单；商品清单以 items 为准，不要自行增加或替换";
 
     private final ActionProposalService proposalService;
     private final Long userId;
@@ -43,13 +49,14 @@ public class ProposeOrderTool {
      *
      * @param addressId    收货地址 ID，来自 list_my_addresses
      * @param userCouponId 用户优惠券 ID，可不填
-     * @param cartIds      购物车 ID 列表；不填表示取当前用户已勾选商品
-     * @return JSON 字符串，含提议编号、金额摘要、过期时间与「需用户确认」提示
+     * @param cartIds      购物车 ID 列表；不填表示取当前用户已勾选商品，
+     *                     填了则每一项都必须已勾选，否则服务端拒绝
+     * @return JSON 字符串，含提议编号、金额摘要、商品清单、过期时间与「需用户确认」提示
      */
     @Tool(name = "propose_order",
-            description = "为当前用户生成「创建订单」的待确认提议。此操作不会创建订单，必须由用户在页面上点击确认后才会真正下单。"
-                    + "参数：addressId 必填（来自 list_my_addresses）；userCouponId 可选；cartIds 可选（不填取已勾选商品）。"
-                    + "返回提议编号、金额与过期时间。",
+            description = "为当前用户生成「创建订单」的待确认提议，不会创建订单，需用户在页面确认后才下单。"
+                    + "addressId 必填（来自 list_my_addresses）；userCouponId 可选；"
+                    + "cartIds 通常不传（服务端按购物车已勾选商品计算），传了则这些商品必须已勾选。",
             readOnly = false,
             concurrencySafe = false)
     public String proposeOrder(Long addressId, Long userCouponId, java.util.List<Long> cartIds) {
@@ -59,6 +66,15 @@ public class ProposeOrderTool {
         ProposalVO proposal;
         try {
             proposal = proposalService.createOrderProposal(userId, addressId, userCouponId, cartIds);
+        } catch (ProposalValidationException e) {
+            // 校验失败要带稳定错误码：模型据此知道「去勾选」「重新选商品」，而不是换参数反复重试
+            StringBuilder sb = new StringBuilder(160);
+            sb.append("{\"error\":").append(ToolJson.str(e.getCode().name()))
+                    .append(",\"hint\":").append(ToolJson.str(e.getCode().getMessage()));
+            if (!e.getDetail().isBlank()) {
+                sb.append(",\"detail\":").append(ToolJson.str(e.getDetail()));
+            }
+            return sb.append('}').toString();
         } catch (BusinessException e) {
             // 业务异常文案本来就是给用户看的（如「收货地址无效」），可以回显
             return "{\"error\":\"PROPOSAL_REJECTED\",\"hint\":" + ToolJson.str(e.getMsg()) + "}";
@@ -81,12 +97,18 @@ public class ProposeOrderTool {
 
     /**
      * 提议视图转 JSON。金额用 plainString，避免科学计数法。
+     * <p>
+     * 特意把 {@code items} 带上：模型要向用户复述「本次包含哪几件」，
+     * 如果不给清单，它只能靠上一轮的 list_my_cart 结果回忆，
+     * 而那个结果可能已被新一轮勾选改变——这正是「说错商品、漏说或多说」的来源。
+     * 同时附一句 hint，把「不许增删商品」钉在返回值里，而不是只写在 prompt 里。
      *
      * @param proposal 提议
      * @return JSON 字符串
      */
     private static String toJson(ProposalVO proposal) {
-        StringBuilder sb = new StringBuilder(256);
+        List<ProposalVO.ItemVO> items = proposal.items() == null ? List.of() : proposal.items();
+        StringBuilder sb = new StringBuilder(320);
         sb.append("{\"proposalNo\":").append(ToolJson.str(proposal.proposalNo()))
                 .append(",\"status\":").append(ToolJson.str(proposal.status()))
                 .append(",\"actualPrice\":").append(ToolJson.num(proposal.actualPrice()))
@@ -94,8 +116,20 @@ public class ProposeOrderTool {
                 .append(",\"freightPrice\":").append(ToolJson.num(proposal.freightPrice()))
                 .append(",\"couponPrice\":").append(ToolJson.num(proposal.couponPrice()))
                 .append(",\"expireAt\":").append(ToolJson.str(proposal.expireAt()))
-                .append(",\"itemCount\":").append(proposal.items() == null ? 0 : proposal.items().size())
-                .append(",\"message\":").append(ToolJson.str(proposal.message()))
+                .append(",\"itemCount\":").append(items.size())
+                .append(",\"items\":[");
+        for (int i = 0; i < items.size(); i++) {
+            ProposalVO.ItemVO item = items.get(i);
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append("{\"name\":").append(ToolJson.str(item.goodsName()))
+                    .append(",\"number\":").append(ToolJson.num(item.number()))
+                    .append(",\"unitPrice\":").append(ToolJson.num(item.unitPrice()))
+                    .append('}');
+        }
+        sb.append("],\"message\":").append(ToolJson.str(proposal.message()))
+                .append(",\"hint\":").append(ToolJson.str(CONFIRM_HINT))
                 .append('}');
         return sb.toString();
     }

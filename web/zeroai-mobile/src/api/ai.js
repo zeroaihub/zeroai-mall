@@ -158,6 +158,8 @@ export function clearAiHistory() {
  *
  * 这是唯一真正会创建订单的接口，必须由用户点击触发；
  * 失败时后端返回 ok=false 且不会产生任何订单。
+ * 注意 data.processing=true 表示消息已入队但订单可能还没落库，
+ * 此时不能当作最终成功，要继续用 {@link fetchOrderProposal} 轮询结果。
  *
  * @param {string} proposalNo 提议编号，来自 confirm_action 事件
  * @returns {Promise<{code: number, data: object}>} 统一响应
@@ -166,7 +168,24 @@ export function confirmOrderProposal(proposalNo) {
   return request({
     url: `/ai/action/confirm/${encodeURIComponent(proposalNo)}`,
     method: 'post',
-    // 下单要经过原入口的校验与消息投递，比普通查询慢，单列一个更宽的超时
+    // 下单要经过原入口的校验、消息投递与落单结果等待，比普通查询慢
     timeout: 15000
+  })
+}
+
+/**
+ * 查询下单提议状态。
+ *
+ * 服务端在查询时会顺带回收「处理中」提议的最终状态（已确认 / 已拒绝 / 超时），
+ * 前端轮询这个接口就能拿到落库结果，不需要另开一个订单查询接口。
+ *
+ * @param {string} proposalNo 提议编号
+ * @returns {Promise<{code: number, data: object}>} 统一响应
+ */
+export function fetchOrderProposal(proposalNo) {
+  return request({
+    url: `/ai/action/${encodeURIComponent(proposalNo)}`,
+    method: 'get',
+    timeout: 10000
   })
 }

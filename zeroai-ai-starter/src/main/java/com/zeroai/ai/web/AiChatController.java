@@ -14,9 +14,11 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import reactor.core.Disposable;
 
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 通用流式对话入口。
@@ -125,7 +127,22 @@ public class AiChatController {
         AiChatHistory history = chatHistoryProvider.getIfAvailable();
         AiChatHistory.Turn turn = history == null ? null : history.begin(userId, sessionId, question);
 
-        chatClient.prompt()
+        /*
+         * 客户端断连时同样要收尾：既不继续消耗 token，也要把已产出的内容存档。
+         * 单轮通道没有 Agent 可中断，取消 Reactor 订阅即可停止生成。
+         */
+        AtomicReference<Disposable> subscriptionRef = new AtomicReference<>();
+        sink.onClose(() -> {
+            if (turn != null) {
+                turn.fail("CLIENT_ABORT", 0);
+            }
+            Disposable subscription = subscriptionRef.get();
+            if (subscription != null && !subscription.isDisposed()) {
+                subscription.dispose();
+            }
+        });
+
+        subscriptionRef.set(chatClient.prompt()
                 .user(question)
                 .stream()
                 .content()
@@ -151,7 +168,7 @@ public class AiChatController {
                             }
                             sink.send(AiEvent.of(AiEventType.DONE, Map.of("steps", 0)));
                             sink.complete();
-                        });
+                        }));
     }
 
     /**

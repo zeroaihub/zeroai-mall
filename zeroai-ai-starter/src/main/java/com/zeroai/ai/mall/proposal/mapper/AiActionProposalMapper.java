@@ -37,6 +37,24 @@ public interface AiActionProposalMapper extends BaseMapper<AiActionProposal> {
                      @Param("now") java.time.LocalDateTime now);
 
     /**
+     * 绑定订单号：CONFIRMING 状态下先落 order_sn，不等最终结果。
+     * <p>
+     * 异步下单意味着「拿到订单号」和「订单落库」之间存在窗口。
+     * 先把订单号写进提议，后续任何一次查询都能用它回查真实落单结果，
+     * 不会出现「提议卡在 CONFIRMING 但没人知道订单号是多少」。
+     *
+     * @param id      主键
+     * @param orderSn 原下单入口生成的订单号
+     * @param now     当前时间
+     * @return 受影响行数
+     */
+    @Update("UPDATE ai_action_proposal SET order_sn = #{orderSn}, update_time = #{now} "
+            + "WHERE id = #{id} AND status = 'CONFIRMING'")
+    int bindOrderSn(@Param("id") Long id,
+                    @Param("orderSn") String orderSn,
+                    @Param("now") java.time.LocalDateTime now);
+
+    /**
      * 确认成功：CONFIRMING → CONFIRMED，回写订单号。
      *
      * @param id      主键

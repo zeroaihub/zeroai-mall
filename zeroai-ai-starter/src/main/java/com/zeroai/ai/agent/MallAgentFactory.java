@@ -365,7 +365,11 @@ public class MallAgentFactory {
      */
     Toolkit buildToolkit(MallAgentContext context, Consumer<ProposalVO> proposalListener) {
         Toolkit toolkit = new Toolkit();
-        toolkit.registerTool(new SearchProductsTool(searchPort));
+        // 搜索工具按请求新建：它内部记着「本轮已搜几次」，复用会把次数跨请求累计
+        int maxSearches = properties.getMaxSearchesPerTurn() == null
+                ? SearchProductsTool.DEFAULT_MAX_SEARCHES
+                : properties.getMaxSearchesPerTurn();
+        toolkit.registerTool(new SearchProductsTool(searchPort, maxSearches));
         toolkit.registerTool(new GoodsDetailTool(goodsDetailService));
         toolkit.registerTool(new StockStatusTool(goodsProductService));
         if (knowledgeService != null) {

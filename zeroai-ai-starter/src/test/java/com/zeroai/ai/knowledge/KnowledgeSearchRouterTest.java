@@ -232,4 +232,63 @@ class KnowledgeSearchRouterTest {
         // k=60: 第一位 1/61，第二位 1/62
         assertEquals(1.0 / 61 + 1.0 / 61, hits.get(0).score(), 1e-9);
     }
+
+    @Test
+    @DisplayName("BM25 零命中时，弱相关向量结果被判为无答案（库外问题不再被硬凑）")
+    void shouldRejectWeakVectorHitWhenBm25Empty() {
+        // 真实实测：支持货到付款吗 → 向量 0.627 且 BM25 全 0，这是典型误报
+        StubBm25 bm25 = new StubBm25(List.of());
+        StubVector vector = new StubVector(List.of(score("kb-coupon-rules", 0.627)));
+        KnowledgeSearchRouter router = new KnowledgeSearchRouter(bm25, vector, props(KnowledgeMode.HYBRID));
+
+        assertTrue(router.search("支持货到付款吗", 3).isEmpty());
+    }
+
+    @Test
+    @DisplayName("BM25 零命中但向量足够强时仍然召回（语义召回的本来用途）")
+    void shouldKeepStrongVectorHitWhenBm25Empty() {
+        StubBm25 bm25 = new StubBm25(List.of());
+        StubVector vector = new StubVector(List.of(score("kb-shipping-freight", 0.72)));
+        KnowledgeSearchRouter router = new KnowledgeSearchRouter(bm25, vector, props(KnowledgeMode.HYBRID));
+
+        List<KnowledgeHit> hits = router.search("寄到新疆要加钱吗", 3);
+
+        assertEquals(1, hits.size());
+        assertEquals("kb-shipping-freight", hits.get(0).sourceId());
+    }
+
+    @Test
+    @DisplayName("BM25 有命中时门禁不生效：字面证据成立，向量分低也不否决")
+    void shouldNotApplyGateWhenBm25HasHits() {
+        StubBm25 bm25 = new StubBm25(List.of(hit("kb-after-sale-refund")));
+        StubVector vector = new StubVector(List.of(score("kb-after-sale-refund", 0.50)));
+        KnowledgeSearchRouter router = new KnowledgeSearchRouter(bm25, vector, props(KnowledgeMode.HYBRID));
+
+        List<KnowledgeHit> hits = router.search("退款怎么申请", 3);
+
+        assertEquals(1, hits.size());
+    }
+
+    @Test
+    @DisplayName("门禁设为 0 表示关闭：退化为「向量命中即算有答案」")
+    void shouldDisableGateWhenConfiguredZero() {
+        KnowledgeProperties properties = props(KnowledgeMode.HYBRID);
+        properties.getHybrid().setVectorOnlyMinScore(0D);
+        StubBm25 bm25 = new StubBm25(List.of());
+        StubVector vector = new StubVector(List.of(score("kb-coupon-rules", 0.30)));
+        KnowledgeSearchRouter router = new KnowledgeSearchRouter(bm25, vector, properties);
+
+        assertEquals(1, router.search("可以开发票吗", 3).size());
+    }
+
+    /**
+     * 构造指定分数的命中，用于阈值测试。
+     *
+     * @param sourceId 来源
+     * @param score    得分
+     * @return 命中
+     */
+    private static KnowledgeHit score(String sourceId, double score) {
+        return new KnowledgeHit(sourceId, "标题-" + sourceId, "general", 1, "2026-10-27", "片段-" + sourceId, score);
+    }
 }

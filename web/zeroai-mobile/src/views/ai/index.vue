@@ -157,20 +157,16 @@
 </template>
 
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, reactive, ref, toRefs } from 'vue'
-import { useRouter } from 'vue-router'
-import { showDialog, showToast } from 'vant'
+import { nextTick, onBeforeUnmount, onMounted, ref, toRefs, watch } from 'vue'
 
 import {
-  CODE_UNAUTHORIZED,
-  clearAiHistory,
-  confirmOrderProposal,
-  fetchAiHistory,
-  streamAgentChat
-} from '@/api/ai'
-import { getToken } from '@/utils/auth'
-
-const router = useRouter()
+  aiChatState,
+  clearSession,
+  confirmProposal,
+  ensureHistory,
+  sendMessage,
+  stopStream
+} from '@/store/aiChat'
 
 const suggestions = [
   '帮我找 3000 元以内的手机',
@@ -179,36 +175,14 @@ const suggestions = [
   '帮我把购物车里的商品下单'
 ]
 
-/**
- * 工具完成后展示的文案。
- * 后端 tool_result 只给通用「查询完成」，这里按工具名换成更具体的结果态，
- * 让用户看得出「刚才到底查了什么」。未登记的工具回落到后端文案。
- */
-const TOOL_DONE_TEXT = {
-  search_products: '已检索商品',
-  get_product_detail: '已获取商品详情',
-  get_stock_status: '已确认库存',
-  search_knowledge: '已查商城规则',
-  list_my_orders: '已查询订单',
-  list_my_addresses: '已核对地址',
-  list_my_cart: '已查看购物车',
-  propose_order: '已生成下单提议'
-}
-
 const scrollRef = ref(null)
 const question = ref('')
-const sending = ref(false)
-/** 历史加载中：避免用户看不到内容以为页面没反应，也避免与发送请求竞争。 */
-const loadingHistory = ref(false)
 
-const state = reactive({
-  messages: []
-})
-
-const { messages } = toRefs(state)
-
-let messageSeq = 0
-let controller = null
+/**
+ * 对话状态来自模块级单例：页面卸载不会清空消息，也不会中断正在生成的回答，
+ * 所以「切走再回来」能接着看到完整结果，而不是一段消失的空气泡。
+ */
+const { messages, sending, loadingHistory } = toRefs(aiChatState)
 
 /** 滚动到底部，让流式输出的最新内容始终可见。 */
 const scrollToBottom = () => {
@@ -220,86 +194,12 @@ const scrollToBottom = () => {
   })
 }
 
-/** 生成一个消息对象，content 为空表示正在等待首个增量。 */
-const createMessage = (role) => {
-  messageSeq += 1
-  return {
-    id: messageSeq,
-    role,
-    content: '',
-    steps: [],
-    error: '',
-    proposal: null
-  }
-}
-
-/** 未登录时统一引导到登录页，并带上回跳地址。 */
-const redirectToLogin = () => {
-  showDialog({
-    title: '需要登录',
-    message: 'AI 导购需要登录后才能查看你的订单与购物车',
-    showCancelButton: true,
-    confirmButtonText: '去登录'
-  })
-    .then(() => {
-      router.push({ path: '/login', query: { redirect: location.href } })
-    })
-    .catch(() => {})
-}
-
-/** 把 SSE 事件写进当前这条助手消息。 */
-const applyEvent = (message, name, payload) => {
-  const data = (payload && payload.data) || {}
-
-  switch (name) {
-    case 'message_delta':
-      message.content += data.delta || ''
-      break
-    case 'thinking':
-      message.steps.push({
-        tool: data.tool,
-        message: data.message || '正在处理',
-        state: 'running'
-      })
-      break
-    case 'tool_result': {
-      // 找到同名且仍在运行的那一步，回填结果状态
-      const running = [...message.steps]
-        .reverse()
-        .find((step) => step.tool === data.tool && step.state === 'running')
-      if (running) {
-        running.state = data.success === false ? 'failed' : 'done'
-        running.message =
-          data.success === false
-            ? data.message || '查询失败'
-            : TOOL_DONE_TEXT[data.tool] || data.message || '已完成'
-      }
-      break
-    }
-    case 'confirm_action':
-      // 提议只是「待确认」：这里只渲染卡片，真正下单要用户点按钮
-      message.proposal = {
-        proposalNo: data.proposalNo,
-        actualPrice: data.actualPrice,
-        itemCount: data.itemCount,
-        expireAt: data.expireAt,
-        message: data.message,
-        orderSn: '',
-        error: '',
-        state: 'pending'
-      }
-      break
-    case 'degrade':
-      message.error = data.message || 'AI 暂时不可用，已切换为普通搜索'
-      break
-    case 'error':
-      message.error = data.message || '服务繁忙，请稍后再试'
-      break
-    default:
-      // done / product_cards 当前页面不额外渲染
-      break
-  }
-}
+// 后台仍在生成时也要跟着滚：watch 变更计数器，避免对 messages 做深度监听
+watch(
+  () => aiChatState.tick,
+  () => scrollToBottom(),
+  { flush: 'post' }
+)
 
 /** 把 ISO 时间裁成「MM-DD HH:mm」，移动端气泡放不下完整时间戳。 */
 const formatExpire = (value) => {
@@ -311,191 +211,47 @@ const formatExpire = (value) => {
 }
 
 /**
- * 确认下单。
- *
- * 这是用户显式动作，也是唯一会创建订单的入口；
- * 失败时后端保证没有产生订单，这里只把原因显示在卡片上，不重试。
- *
- * @param {object} message 带 proposal 的助手消息
- */
-const handleConfirm = (message) => {
-  const proposal = message.proposal
-  if (!proposal || proposal.state !== 'pending') {
-    return
-  }
-  proposal.state = 'confirming'
-
-  confirmOrderProposal(proposal.proposalNo)
-    .then((res) => {
-      const result = (res && res.data) || {}
-      if (result.ok) {
-        proposal.state = 'confirmed'
-        proposal.orderSn = result.orderSn || ''
-        showToast('下单请求已提交')
-      } else {
-        proposal.state = 'failed'
-        proposal.error = result.message || '确认失败，请重新生成提议'
-      }
-    })
-    .catch((error) => {
-      proposal.state = 'failed'
-      proposal.error = error.message || '确认失败，请稍后再试'
-    })
-    .finally(() => {
-      scrollToBottom()
-    })
-}
-
-/**
- * 把服务端返回的历史记录还原成气泡列表。
- * 历史里不保存工具过程态的实时状态，这里统一按「已完成」渲染。
- *
- * @param {Array} items 历史条目
- */
-const restoreHistory = (items) => {
-  items.forEach((item) => {
-    if (!item || !item.question) {
-      return
-    }
-    state.messages.push({ ...createMessage('user'), content: item.question })
-
-    const reply = createMessage('assistant')
-    reply.content = item.answer || ''
-    reply.steps = (item.tools || []).map((tool) => ({
-      tool,
-      message: TOOL_DONE_TEXT[tool] || '已完成',
-      state: 'done'
-    }))
-    if (item.success === false) {
-      reply.error = '这条回答当时异常中断'
-    }
-    state.messages.push(reply)
-  })
-}
-
-/** 加载历史对话。未登录、历史关闭或存储不可用时静默跳过。 */
-const loadHistory = () => {
-  if (!getToken()) {
-    return
-  }
-  loadingHistory.value = true
-  fetchAiHistory(20)
-    .then((res) => {
-      const items = (res && res.data) || []
-      if (items.length) {
-        restoreHistory([...items].reverse())
-        scrollToBottom()
-      }
-    })
-    .catch(() => {
-      // 历史是旁路能力：拉取失败不影响正常提问，不打扰用户
-    })
-    .finally(() => {
-      loadingHistory.value = false
-    })
-}
-
-/**
  * 发送一条提问。
  *
  * @param {string} [text] 指定文本（欢迎页示例词）；不传则用输入框内容
  */
 const handleSend = (text) => {
-  if (sending.value) {
-    return
-  }
-
   const content = (text || question.value || '').trim()
-  if (!content) {
+  if (!content || sending.value) {
     return
   }
-
-  if (!getToken()) {
-    redirectToLogin()
-    return
-  }
-
+  // 先清空输入框，避免请求发出后旧文案还留在输入区
   question.value = ''
-  sending.value = true
-
-  state.messages.push({ ...createMessage('user'), content })
-  const reply = createMessage('assistant')
-  state.messages.push(reply)
-  scrollToBottom()
-
-  controller = new AbortController()
-
-  streamAgentChat({
-    question: content,
-    signal: controller.signal,
-    onEvent: (name, payload) => {
-      applyEvent(reply, name, payload)
-      scrollToBottom()
-    },
-    onError: (error) => {
-      if (error.code === CODE_UNAUTHORIZED) {
-        redirectToLogin()
-        return
-      }
-      reply.error = error.message || '服务繁忙，请稍后再试'
-      scrollToBottom()
-    }
-  }).finally(() => {
-    sending.value = false
-    controller = null
-    // 停止或异常导致没有任何内容时，给一个明确的收尾提示，避免出现空气泡
-    if (!reply.content && !reply.error) {
-      reply.error = '本次没有返回内容，请重试'
-    }
-    scrollToBottom()
-  })
+  sendMessage(content)
 }
 
 /** 用户主动停止：中断订阅，已输出的内容保留。 */
 const handleStop = () => {
-  if (controller) {
-    controller.abort()
-    showToast('已停止')
-  }
+  stopStream()
 }
 
-/**
- * 清空会话。
- *
- * 服务端历史与会话状态是两回事：这里清掉的是「可回看的历史记录」，
- * 助手自身的多轮上下文仍由服务端会话维持，所以先跟用户说清楚再删。
- */
+/** 清空会话：本地气泡与服务端历史一起清。 */
 const handleClear = () => {
-  if (!state.messages.length) {
-    return
-  }
-  showDialog({
-    title: '清空对话',
-    message: '将同时删除服务端保存的历史记录，删除后无法恢复',
-    showCancelButton: true,
-    confirmButtonText: '清空'
-  })
-    .then(() => {
-      if (sending.value) {
-        handleStop()
-      }
-      state.messages.splice(0, state.messages.length)
-      clearAiHistory().catch(() => {
-        // 删除失败不影响本地已清空的视图，下次进入会重新拉到残留记录
-        showToast('服务端历史清理失败，稍后可重试')
-      })
-    })
-    .catch(() => {})
+  clearSession()
+}
+
+/** 确认下单：走后端确认接口，卡片状态由 store 维护。 */
+const handleConfirm = (message) => {
+  confirmProposal(message)
 }
 
 onMounted(() => {
-  loadHistory()
+  ensureHistory()
+  scrollToBottom()
 })
 
 onBeforeUnmount(() => {
-  if (controller) {
-    controller.abort()
-  }
+  /*
+   * 这里刻意不 abort：离开页面只是「看不见」，流要继续收完，历史也才会落库。
+   * 早期版本在这里 abort，导致两个问题——回来时回答消失；服务端收不到 done
+   * 而不写历史，重进页面查不到这一轮。
+   * 需要中断请走「停止」按钮，需要丢弃请走「清空」。
+   */
 })
 </script>
 

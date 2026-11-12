@@ -1,6 +1,8 @@
 package com.zeroai.ai.mall.tool;
 
 import com.zeroai.ai.mall.proposal.ActionProposalService;
+import com.zeroai.ai.mall.proposal.ProposalRejectCode;
+import com.zeroai.ai.mall.proposal.ProposalValidationException;
 import com.zeroai.ai.mall.proposal.vo.ProposalVO;
 import com.zeroai.util.exception.BusinessException;
 import org.junit.jupiter.api.DisplayName;
@@ -97,5 +99,41 @@ class ProposeOrderToolTest {
 
         assertTrue(result.contains("PROPOSAL_FAILED"), result);
         assertFalse(result.contains("db down"), result);
+    }
+
+    @Test
+    @DisplayName("未勾选商品被拒绝时回传稳定错误码与明细，供模型引导用户勾选")
+    void notCheckedReturnsActionableCode() {
+        ActionProposalService service = mock(ActionProposalService.class);
+        when(service.createOrderProposal(any(), any(), any(), any()))
+                .thenThrow(new ProposalValidationException(ProposalRejectCode.CART_NOT_CHECKED,
+                        "未勾选：iPhone 保护壳"));
+        ProposeOrderTool tool = new ProposeOrderTool(service, 100L, null);
+
+        String result = tool.proposeOrder(1L, null, List.of(10L));
+
+        assertTrue(result.contains("\"error\":\"CART_NOT_CHECKED\""), result);
+        assertTrue(result.contains("勾选"), result);
+        assertTrue(result.contains("保护壳"), "明细要带回具体商品名，模型才能让用户去勾选");
+        assertFalse(result.contains("PROPOSAL_FAILED"), result);
+    }
+
+    @Test
+    @DisplayName("成功时返回商品清单与「不许增删」提示")
+    void successCarriesItemList() {
+        ActionProposalService service = mock(ActionProposalService.class);
+        ProposalVO vo = new ProposalVO("p-2", "PENDING", "CREATE_ORDER",
+                new BigDecimal("50.00"), new BigDecimal("40.00"), new BigDecimal("10.00"),
+                BigDecimal.ZERO, "2026-10-26T17:00:00",
+                List.of(new ProposalVO.ItemVO("测试商品", new BigDecimal("20.00"), 2)),
+                null, null, "下单提议已生成，需要你确认后才会创建订单");
+        when(service.createOrderProposal(eq(100L), eq(1L), any(), anyList())).thenReturn(vo);
+
+        String result = new ProposeOrderTool(service, 100L, null).proposeOrder(1L, null, List.of(10L));
+
+        assertTrue(result.contains("\"itemCount\":1"), result);
+        assertTrue(result.contains("测试商品"), result);
+        assertTrue(result.contains("\"number\":2"), result);
+        assertTrue(result.contains("不要自行增加或替换"), result);
     }
 }

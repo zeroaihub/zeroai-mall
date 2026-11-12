@@ -447,6 +447,26 @@ public class KnowledgeProperties {
          */
         private boolean fallbackToBm25 = true;
 
+        /**
+         * BM25 一路零命中时，向量分支单独成立所需的最低余弦相似度。
+         * <p>
+         * <b>为什么需要这个而 {@link #minScore} 不能替代</b>：RRF 只看排名、丢掉分数，
+         * 融合分无法区分「0.63 的弱相关」和「0.78 的强相关」，两路各一个命中时融合分一样。
+         * 也就是说 {@code vector.min-score=0.55} 之后，任何沾边的文档都能凑出一条命中，
+         * 库外问题就会被硬凑成「有答案」。
+         * <p>
+         * <b>0.66 的依据</b>（2026-11-12 用真实 bge-m3 + 29 条评测集实测）：
+         * 库外问题（发票/积分/货到付款）最高余弦 0.627，且 BM25 全为 0；
+         * 可答问题的正确文档余弦中位 0.679。两边的分数分布本身是重叠的
+         * （可答最低 0.559 低于库外最高 0.627），单靠余弦无法分开；
+         * 但「BM25 零命中」这个特征能把它们干净切开——所有可答问题 BM25 都 ≥ 2.45。
+         * <p>
+         * 因此这条规则只在 BM25 零命中时生效：此时向量是唯一证据，要求更强才算数；
+         * BM25 有命中说明字面证据已成立，向量分多低都不该否决它。
+         * 设 0 表示关闭该门禁（退回「向量命中即算有答案」的旧行为）。
+         */
+        private double vectorOnlyMinScore = 0.66;
+
         public int getRrfK() {
             return rrfK;
         }
@@ -469,6 +489,14 @@ public class KnowledgeProperties {
 
         public void setFallbackToBm25(boolean fallbackToBm25) {
             this.fallbackToBm25 = fallbackToBm25;
+        }
+
+        public double getVectorOnlyMinScore() {
+            return vectorOnlyMinScore;
+        }
+
+        public void setVectorOnlyMinScore(double vectorOnlyMinScore) {
+            this.vectorOnlyMinScore = vectorOnlyMinScore;
         }
     }
 }

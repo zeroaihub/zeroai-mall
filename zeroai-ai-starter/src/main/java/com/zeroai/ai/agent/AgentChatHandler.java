@@ -48,6 +48,12 @@ public class AgentChatHandler {
     /** 匿名会话在 RuntimeContext 中的用户标识，仅用于 SDK 内部区分，不代表任何权限。 */
     private static final String ANONYMOUS_PRINCIPAL = "anonymous";
 
+    /**
+     * 客户端主动断开（关页面、切后台被回收、点停止）时的历史错误码。
+     * 明确区分于模型侧失败，便于排查「为什么这条回答不完整」。
+     */
+    private static final String CANCEL_CLIENT_ABORT = "CLIENT_ABORT";
+
     private final MallAgentFactory agentFactory;
     private final AiAgentProperties properties;
 
@@ -102,13 +108,17 @@ public class AgentChatHandler {
         AtomicReference<HarnessAgent> agentRef = new AtomicReference<>();
         AtomicReference<Disposable> subscriptionRef = new AtomicReference<>();
 
-        // 历史只存「完整的一轮」：中途断连不会走到 done/error，因此不会落库
         AiChatHistory.Turn turn = chatHistory == null
                 ? null
                 : chatHistory.begin(userId, sessionId, question);
 
-        // 断连优先于正常完成：先取消订阅，再中断 Agent，最后释放会话占位
+        // 断连优先于正常完成：先把已产出的内容存档，再取消订阅，最后中断 Agent。
+        // 断连时不会走到 onComplete/onError，若不在此处收尾，这一轮永远不会落库——
+        // 用户关掉对话框再回来，就会看到「问过的问题和回答都不见了」。
         sink.onClose(() -> {
+            if (turn != null) {
+                turn.fail(CANCEL_CLIENT_ABORT, steps.get());
+            }
             Disposable subscription = subscriptionRef.get();
             if (subscription != null && !subscription.isDisposed()) {
                 log.info("客户端断连，取消模型流，userId={}, sessionId={}", userId, sessionId);

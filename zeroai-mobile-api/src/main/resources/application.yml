@@ -104,6 +104,9 @@ zeroai:
     sse-timeout-ms: 120000      # 显式设置，避免容器默认 30s 截断长回答
     max-steps: 6
     max-tool-calls-per-turn: 6
+    # 单轮 search_products 次数上限：基线里模型对稀疏结果会连搜 5 次，
+    # 步数顶满、token 翻倍而答案没变好。这里是服务端确定性止损点。
+    max-searches-per-turn: ${AI_MAX_SEARCHES_PER_TURN:3}
     max-history-turns: 8
     tool-timeout-ms: 3000
     degrade-on-error: true
@@ -154,7 +157,8 @@ zeroai:
         api-key: ${AI_EMBEDDING_API_KEY:}
         model: ${AI_EMBEDDING_MODEL:text-embedding-v3}
         dimension: ${AI_EMBEDDING_DIMENSION:1024}
-        timeout-ms: 5000
+        # 本地 bge-m3 冷加载实测 9.7s，5s 会导致开机首次启动必然超时降级回 BM25
+        timeout-ms: ${AI_EMBEDDING_TIMEOUT_MS:20000}
         max-chars: 1000
         batch-size: 16
       vector:
@@ -167,6 +171,9 @@ zeroai:
         rrf-k: 60
         # 融合后阈值，默认 0：两路各自已过滤过低分，这里再设会误杀单路语义命中
         min-score: 0
+        # BM25 零命中时向量分支的最低余弦分。实测依据见 KnowledgeProperties.Hybrid 注释：
+        # 库外问题最高 0.627 且 BM25 全 0，可答问题正确文档中位 0.679，故取 0.66
+        vector-only-min-score: ${AI_KNOWLEDGE_VECTOR_ONLY_MIN_SCORE:0.66}
         # 向量分支挂掉时是否退回纯 BM25
         fallback-to-bm25: true
 
