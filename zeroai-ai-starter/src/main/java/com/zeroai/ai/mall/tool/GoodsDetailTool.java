@@ -5,6 +5,8 @@ import com.zeroai.domain.api.goods.entity.GoodsProduct;
 import com.zeroai.domain.api.goods.response.GoodsDetailResponseVO;
 import com.zeroai.domain.api.goods.service.IGoodsDetailService;
 import io.agentscope.core.tool.Tool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
@@ -15,6 +17,8 @@ import java.util.List;
  * 保证 AI 通道与页面展示一致。不返回规格全量组合，只给模型做推荐所需的信息。
  */
 public class GoodsDetailTool {
+
+    private static final Logger log = LoggerFactory.getLogger(GoodsDetailTool.class);
 
     /** 最多列出的 SKU 数，避免长尾规格占满上下文。 */
     private static final int MAX_SKU = 5;
@@ -39,6 +43,7 @@ public class GoodsDetailTool {
             readOnly = true,
             concurrencySafe = true)
     public String getProductDetail(Long goodsId) {
+        log.info("工具调用 get_product_detail goodsId={}", goodsId);
         if (goodsId == null) {
             return "{\"error\":\"MISSING_GOODS_ID\",\"hint\":\"需要先通过 search_products 拿到 goodsId\"}";
         }
@@ -47,9 +52,11 @@ public class GoodsDetailTool {
         try {
             detail = goodsDetailService.getGoodsDetailData(goodsId);
         } catch (RuntimeException e) {
+            log.warn("工具失败 get_product_detail goodsId={} error={}", goodsId, e.getMessage());
             return "{\"error\":\"DETAIL_UNAVAILABLE\",\"hint\":\"商品详情查询失败，请稍后再试\"}";
         }
         if (detail == null || detail.getInfo() == null) {
+            log.info("工具结果 get_product_detail goodsId={} found=false", goodsId);
             return "{\"error\":\"GOODS_NOT_FOUND\",\"hint\":\"商品不存在或已下架，请重新搜索\"}";
         }
 
@@ -81,6 +88,8 @@ public class GoodsDetailTool {
                 emitted++;
             }
         }
+        log.info("工具结果 get_product_detail goodsId={} name=\"{}\" onSale={} skus={}",
+                goodsId, info.getName(), info.getIsOnSale(), emitted);
         return sb.append("]}").toString();
     }
 

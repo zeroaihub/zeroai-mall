@@ -124,6 +124,25 @@ public interface AiActionProposalMapper extends BaseMapper<AiActionProposal> {
                     @Param("now") java.time.LocalDateTime now);
 
     /**
+     * 顶掉该用户全部待确认提议：PENDING → SUPERSEDED。
+     * <p>
+     * 为什么在生成新提议前执行：一个用户同时只应有一份可确认的提议。
+     * 若允许多条并存，页面上两张卡片都写着「待确认」，用户点旧的那张时购物车快照早已变化，
+     * 只会得到一次「内容已变化」的失败。先作废再插入，让「最新一条才有效」成为确定性行为。
+     * <p>
+     * 只动 PENDING：CONFIRMING 可能已经在下单入口里，作废它会掩盖在途订单的真实结果。
+     *
+     * @param userId 当前用户 ID
+     * @param now    当前时间
+     * @return 被作废的行数
+     */
+    @Update("UPDATE ai_action_proposal SET status = 'SUPERSEDED', fail_code = 'SUPERSEDED', "
+            + "update_time = #{now} "
+            + "WHERE user_id = #{userId} AND status = 'PENDING'")
+    int supersedePending(@Param("userId") Long userId,
+                         @Param("now") java.time.LocalDateTime now);
+
+    /**
      * 按提议编号查询，<b>必须带 userId</b>：跨用户查询直接查不到，不靠上层再判断归属。
      *
      * @param proposalNo 提议编号

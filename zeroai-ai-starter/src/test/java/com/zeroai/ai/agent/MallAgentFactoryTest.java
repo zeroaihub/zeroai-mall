@@ -42,8 +42,10 @@ class MallAgentFactoryTest {
     }
 
     private static MallAgentFactory newFactory(Path workspace, HarnessProperties harness) {
-        return new MallAgentFactory(dummyProperties(workspace), harness, null, null, null, null,
-                null, null, null, new com.zeroai.ai.mall.proposal.ActionProposalProperties(), null);
+        return new MallAgentFactory(dummyProperties(workspace), harness, null, null,
+                org.mockito.Mockito.mock(com.zeroai.domain.api.goods.service.IGoodsService.class),
+                null, null, null, null, null,
+                new com.zeroai.ai.mall.proposal.ActionProposalProperties(), null);
     }
 
     @Test
@@ -62,6 +64,7 @@ class MallAgentFactoryTest {
         assertTrue(names.contains("get_product_detail"), "匿名也应有详情能力");
         assertTrue(names.contains("get_stock_status"), "匿名也应有库存能力");
         assertFalse(names.contains("list_my_orders"), "匿名用户绝不能有订单查询工具");
+        assertFalse(names.contains("add_to_cart"), "匿名用户没有购物车，不能注册加购工具");
     }
 
     @Test
@@ -76,7 +79,7 @@ class MallAgentFactoryTest {
         properties.setApiKey("   ");
         IllegalStateException ex = assertThrows(IllegalStateException.class,
                 () -> new MallAgentFactory(properties, new HarnessProperties(), null, null, null, null,
-                        null, null, null, new com.zeroai.ai.mall.proposal.ActionProposalProperties(), null));
+                        null, null, null, null, new com.zeroai.ai.mall.proposal.ActionProposalProperties(), null));
         assertTrue(ex.getMessage().contains("LLM_API_KEY"), "报错必须指明环境变量名，且不得包含密钥值");
     }
 
@@ -170,8 +173,8 @@ class MallAgentFactoryTest {
         }
         Toolkit toolkit = newFactory(workspace, harness).buildToolkit(new MallAgentContext(1001L, "s-full"));
         Set<String> names = toolkit.getToolNames();
-        assertEquals(Set.of("search_products", "get_product_detail", "get_stock_status",
-                        "list_my_orders", "list_my_addresses", "list_my_cart"), names,
+        assertEquals(Set.of("search_products", "show_products", "get_product_detail", "get_stock_status",
+                        "list_my_orders", "list_my_addresses", "list_my_cart", "add_to_cart"), names,
                 "Harness 能力开关不得改变工具集");
     }
 
@@ -182,7 +185,7 @@ class MallAgentFactoryTest {
         com.zeroai.ai.knowledge.KnowledgeService knowledge = new com.zeroai.ai.knowledge.KnowledgeService(
                 (query, limit) -> List.of(), new com.zeroai.ai.knowledge.KnowledgeProperties());
         MallAgentFactory factory = new MallAgentFactory(dummyProperties(workspace), new HarnessProperties(),
-                null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null, null,
                 new com.zeroai.ai.mall.proposal.ActionProposalProperties(), knowledge);
 
         Set<String> names = factory.buildToolkit(new MallAgentContext(null, "s-kb")).getToolNames();
@@ -225,7 +228,7 @@ class MallAgentFactoryTest {
     }
 
     @Test
-    @DisplayName("写操作提议开启时只多出 propose_order，仍无任何直接写工具")
+    @DisplayName("写操作提议开启时多出 propose_order，加购始终存在，仍无任何直接下单工具")
     void shouldRegisterProposalToolOnlyWhenActionEnabled(@TempDir Path workspace) {
         com.zeroai.ai.mall.proposal.ActionProposalProperties action =
                 new com.zeroai.ai.mall.proposal.ActionProposalProperties();
@@ -234,9 +237,10 @@ class MallAgentFactoryTest {
         com.zeroai.ai.mall.proposal.ActionProposalService stubService =
                 new com.zeroai.ai.mall.proposal.ActionProposalService(null, null, null, null, null, null, action);
         MallAgentFactory factory = new MallAgentFactory(dummyProperties(workspace), new HarnessProperties(),
-                null, null, null, null, null, null, stubService, action, null);
+                null, null, null, null, null, null, null, stubService, action, null);
         Set<String> names = factory.buildToolkit(new MallAgentContext(1001L, "s-action")).getToolNames();
         assertTrue(names.contains("propose_order"), "开启后应能生成下单提议，实际=" + names);
+        assertTrue(names.contains("add_to_cart"), "登录用户应能加购，实际=" + names);
         assertFalse(names.contains("create_order"), "绝不能出现直接下单工具");
         assertFalse(names.contains("submit_order"), "绝不能出现直接下单工具");
         assertFalse(names.contains("pay_order"), "绝不能出现支付工具");
@@ -251,7 +255,7 @@ class MallAgentFactoryTest {
         com.zeroai.ai.mall.proposal.ActionProposalService stubService =
                 new com.zeroai.ai.mall.proposal.ActionProposalService(null, null, null, null, null, null, action);
         MallAgentFactory factory = new MallAgentFactory(dummyProperties(workspace), new HarnessProperties(),
-                null, null, null, null, null, null, stubService, action, null);
+                null, null, null, null, null, null, null, stubService, action, null);
         Set<String> names = factory.buildToolkit(new MallAgentContext(null, "s-anon-action")).getToolNames();
         assertFalse(names.contains("propose_order"), "匿名用户不得生成下单提议");
     }

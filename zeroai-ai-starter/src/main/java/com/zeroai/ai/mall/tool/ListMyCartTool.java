@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.zeroai.domain.api.cart.entity.Cart;
 import com.zeroai.domain.api.cart.service.ICartService;
 import io.agentscope.core.tool.Tool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
@@ -14,6 +16,8 @@ import java.util.List;
  * 本工具只读，不改勾选状态、不改数量、不加购。
  */
 public class ListMyCartTool {
+
+    private static final Logger log = LoggerFactory.getLogger(ListMyCartTool.class);
 
     /** 单次返回条数上限。 */
     private static final int MAX_LIMIT = 10;
@@ -45,15 +49,18 @@ public class ListMyCartTool {
             concurrencySafe = true)
     public String listMyCart(Integer limit) {
         int size = limit == null ? 5 : Math.min(Math.max(limit, 1), MAX_LIMIT);
+        log.info("工具调用 list_my_cart userId={} limit={}", userId, size);
         List<Cart> carts;
         try {
             carts = cartService.list(Wrappers.lambdaQuery(Cart.class)
                     .eq(Cart::getUserId, userId)
                     .last("LIMIT " + size));
         } catch (RuntimeException e) {
+            log.warn("工具失败 list_my_cart userId={} error={}", userId, e.getMessage());
             return "{\"error\":\"CART_UNAVAILABLE\",\"hint\":\"购物车查询失败，请稍后再试\"}";
         }
         if (carts == null || carts.isEmpty()) {
+            log.info("工具结果 list_my_cart userId={} count=0", userId);
             return "{\"count\":0,\"items\":[],\"hint\":\"购物车是空的，可以先搜索商品\"}";
         }
         StringBuilder sb = new StringBuilder(128 + carts.size() * 128);
@@ -71,6 +78,8 @@ public class ListMyCartTool {
                     .append(",\"checked\":").append(Boolean.TRUE.equals(cart.getChecked()))
                     .append('}');
         }
+        log.info("工具结果 list_my_cart userId={} count={} checkedCount={}", userId, carts.size(),
+                carts.stream().filter(cart -> Boolean.TRUE.equals(cart.getChecked())).count());
         return sb.append("]}").toString();
     }
 }

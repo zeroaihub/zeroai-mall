@@ -41,7 +41,8 @@ public final class AgentEventMapper {
             "list_my_orders", "正在查询你的订单",
             "list_my_addresses", "正在核对收货地址",
             "list_my_cart", "正在查看购物车",
-            "propose_order", "正在生成下单提议"
+            "add_to_cart", "正在加入购物车",
+            "propose_order", "正在准备下单"
     );
 
     /** 未知工具的统一对外标识，不含任何内部命名信息。 */

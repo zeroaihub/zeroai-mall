@@ -1,6 +1,8 @@
 package com.zeroai.ai.mall.proposal;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.zeroai.ai.mall.event.CartSelection;
 import com.zeroai.ai.mall.proposal.entity.AiActionProposal;
 import com.zeroai.ai.mall.proposal.mapper.AiActionProposalMapper;
 import com.zeroai.ai.mall.proposal.vo.ConfirmResVO;
@@ -153,8 +155,14 @@ public class ActionProposalService {
             throw new BusinessException(ProposalRejectCode.ADDRESS_INVALID.getMessage());
         }
 
+        log.info("生成提议开始 userId={} addressId={} couponId={} cartIds={}",
+                userId, addressId, userCouponId, cartIds);
         List<Cart> carts = resolveCarts(userId, cartIds);
         List<ProposalItem> items = toItems(carts);
+        log.info("生成提议已解析购物车 userId={} cartRows={} itemKinds={} goodsPricePreview={}",
+                userId, carts.size(), items.size(), items.stream()
+                        .map(item -> item.unitPrice().multiply(java.math.BigDecimal.valueOf(item.number())))
+                        .reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add));
         if (items.size() > properties.getMaxItemsPerProposal()) {
             throw new IllegalArgumentException("单次下单商品种类超过上限 " + properties.getMaxItemsPerProposal());
         }
@@ -173,14 +181,28 @@ public class ActionProposalService {
             AiActionProposal existing = proposalMapper.selectByIdempotencyKey(userId, idempotencyKey);
             if (existing != null) {
                 if (isReusable(existing)) {
+                    // 同一快照重复提交：复用而不是新建，日志要能看出「这次没有写库」
+                    log.info("复用既有提议 userId={} proposalNo={} attempt={}",
+                            userId, existing.getProposalNo(), attempt);
                     return toView(existing);
                 }
+                log.info("幂等键命中历史提议，换下一个键 userId={} proposalNo={} status={}",
+                        userId, existing.getProposalNo(), existing.getStatus());
                 continue;
             }
 
             AiActionProposal proposal = newProposal(userId, addressId, userCouponId, carts, items,
                     price, idempotencyKey);
             try {
+                /*
+                 * 插入前先作废该用户其余待确认提议：同一时刻只允许一份可确认的提议。
+                 * 顺序不能反——先插入再作废，中间窗口里会短暂出现两条 PENDING，
+                 * 并发确认时可能都被人点到。
+                 */
+                int superseded = proposalMapper.supersedePending(userId, LocalDateTime.now());
+                if (superseded > 0) {
+                    log.info("已作废旧提议 userId={} superseded={}", userId, superseded);
+                }
                 proposalMapper.insert(proposal);
             } catch (DuplicateKeyException e) {
                 // 并发下同一快照被两条请求同时插入，唯一键兜住；对方仍是待确认才复用，否则换下一个键
@@ -195,6 +217,153 @@ public class ActionProposalService {
             return toView(proposal);
         }
         throw new BusinessException("下单提议生成过于频繁，请稍后再试");
+    }
+
+    /**
+     * 准备下单：读取购物车与收货地址，供前端弹层让用户勾选商品。
+     * <p>
+     * 只读，不创建任何提议。选择权仍然在用户手里：这里只是把「去哪勾选」从购物车页搬到对话内，
+     * 勾选结果由前端通过 {@link #createProposalForSelection} 提交，服务端仍然只认
+     * {@code checked=true} 的行。
+     *
+     * @param userId       当前登录用户 ID
+     * @param addressId    收货地址 ID，可为空（为空时取默认地址）
+     * @param userCouponId 用户优惠券 ID，可为空
+     * @return 购物车与地址快照；购物车为空时返回 null
+     * @throws BusinessException 用户没有任何可用收货地址
+     */
+    public CartSelection prepareCartSelection(Long userId, Long addressId, Long userCouponId) {
+        if (userId == null) {
+            throw new IllegalStateException("未登录用户不允许准备下单");
+        }
+        Address address = resolveAddress(userId, addressId);
+        log.info("准备下单选择 userId={} 解析地址 addressId={} requested={}", userId, address.getId(), addressId);
+        List<Cart> carts;
+        try {
+            carts = cartService.list(Wrappers.lambdaQuery(Cart.class)
+                    .eq(Cart::getUserId, userId)
+                    .orderByDesc(Cart::getId));
+        } catch (RuntimeException e) {
+            throw new BusinessException("购物车读取失败，请稍后再试");
+        }
+        if (carts == null || carts.isEmpty()) {
+            return null;
+        }
+        List<CartSelection.Item> items = new ArrayList<>(carts.size());
+        int totalNumber = 0;
+        for (Cart cart : carts) {
+            // 弹层最多展示 MAX_CART_IDS 行，与提交时的上限保持一致，避免「勾得上但提交被拒」
+            if (items.size() >= MAX_CART_IDS) {
+                break;
+            }
+            int number = cart.getNumber() == null ? 0 : cart.getNumber();
+            totalNumber += number;
+            items.add(new CartSelection.Item(cart.getId(), cart.getGoodsId(), cart.getProductId(),
+                    cart.getGoodsName(), cart.getPrice(), cart.getNumber(),
+                    Boolean.TRUE.equals(cart.getChecked()), cart.getPicUrl()));
+        }
+        log.info("准备下单选择完成 userId={} addressId={} itemCount={} totalNumber={}",
+                userId, address.getId(), items.size(), totalNumber);
+        return new CartSelection(address.getId(), addressText(address), userCouponId, items, totalNumber);
+    }
+
+    /**
+     * 按用户勾选结果生成提议。地址允许为空，由服务端解析默认地址。
+     * <p>
+     * 与 {@link #createOrderProposal} 的唯一差别是地址解析：弹层里用户只勾商品，
+     * 地址取默认即可；其余校验、幂等与作废旧提议的语义完全复用，避免两套下单前置逻辑漂移。
+     *
+     * @param userId       当前登录用户 ID
+     * @param addressId    收货地址 ID，可为空
+     * @param userCouponId 用户优惠券 ID，可为空
+     * @param cartIds      用户勾选的购物车 ID
+     * @return 提议视图
+     */
+    public ProposalVO createProposalForSelection(Long userId, Long addressId,
+                                                 Long userCouponId, List<Long> cartIds) {
+        Long resolved = resolveAddress(userId, addressId).getId();
+        log.info("按勾选生成提议 userId={} requestedAddress={} resolvedAddress={} cartIds={}",
+                userId, addressId, resolved, cartIds);
+        return createOrderProposal(userId, resolved, userCouponId, cartIds);
+    }
+
+    /**
+     * 解析收货地址：显式传入的优先，否则取默认地址，再否则取最近新增的一条。
+     * <p>
+     * 用字符串列名而不是 lambda：{@code Address.isDefault} 字段的 getter 是 {@code isDefault()}，
+     * MyBatis-Plus 的 lambda 解析会把它当成 {@code default} 属性，找不到对应列而抛异常。
+     *
+     * @param userId    当前用户 ID
+     * @param addressId 显式指定地址，可为空
+     * @return 可用地址，不会为空
+     * @throws BusinessException 用户没有可用地址或地址不属于本人
+     */
+    private Address resolveAddress(Long userId, Long addressId) {
+        if (addressId != null) {
+            Address address = addressService.getById(addressId);
+            if (address == null || !Objects.equals(address.getMemberId(), userId)) {
+                throw new BusinessException(ProposalRejectCode.ADDRESS_INVALID.getMessage());
+            }
+            return address;
+        }
+        List<Address> addresses = addressService.list(new QueryWrapper<Address>()
+                .eq("member_id", userId)
+                .orderByDesc("is_default")
+                .orderByDesc("id")
+                .last("LIMIT 1"));
+        if (addresses == null || addresses.isEmpty()) {
+            throw new BusinessException("还没有收货地址，请先在「我的-收货地址」添加");
+        }
+        return addresses.get(0);
+    }
+
+    /**
+     * 地址摘要，供弹层展示「这一单寄到哪」。手机号做脱敏，不下发完整号码。
+     *
+     * @param address 地址
+     * @return 收件人 + 脱敏手机号 + 省市区 + 详细地址
+     */
+    private static String addressText(Address address) {
+        StringBuilder sb = new StringBuilder(64);
+        sb.append(address.getName() == null ? "" : address.getName());
+        String tel = maskTel(address.getTel());
+        if (!tel.isBlank()) {
+            sb.append(' ').append(tel);
+        }
+        appendIfPresent(sb, address.getProvince());
+        appendIfPresent(sb, address.getCity());
+        appendIfPresent(sb, address.getCounty());
+        appendIfPresent(sb, address.getAddressDetail());
+        return sb.toString().trim();
+    }
+
+    /**
+     * 非空片段追加到摘要。
+     *
+     * @param sb    目标缓冲
+     * @param value 片段
+     */
+    private static void appendIfPresent(StringBuilder sb, String value) {
+        if (value != null && !value.isBlank()) {
+            sb.append(' ').append(value.trim());
+        }
+    }
+
+    /**
+     * 手机号脱敏：保留前 3 位与后 4 位。
+     *
+     * @param tel 原始号码，可为空
+     * @return 脱敏号码；无法脱敏时返回空串
+     */
+    private static String maskTel(String tel) {
+        if (tel == null || tel.isBlank()) {
+            return "";
+        }
+        String trimmed = tel.trim();
+        if (trimmed.length() < 8) {
+            return "";
+        }
+        return trimmed.substring(0, 3) + "****" + trimmed.substring(trimmed.length() - 4);
     }
 
     /**
@@ -921,6 +1090,7 @@ public class ActionProposalService {
             case CONFIRMED -> "已为你提交订单";
             case REJECTED -> "下单提议已失效：" + rejectMessage(proposal.getFailCode());
             case EXPIRED -> ProposalRejectCode.EXPIRED.getMessage();
+            case SUPERSEDED -> ProposalRejectCode.SUPERSEDED.getMessage();
         };
         return new ProposalVO(
                 proposal.getProposalNo(),

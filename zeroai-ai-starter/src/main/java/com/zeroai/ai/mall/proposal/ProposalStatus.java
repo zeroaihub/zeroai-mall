@@ -10,11 +10,12 @@ package com.zeroai.ai.mall.proposal;
  * <pre>
  *   PENDING   -> CONFIRMING  确认请求抢锁成功
  *   PENDING   -> EXPIRED     超过 expire_time，惰性判定
+ *   PENDING   -> SUPERSEDED  用户又生成了新提议，旧提议被顶掉
  *   CONFIRMING-> CONFIRMED   下单入口返回订单号
  *   CONFIRMING-> REJECTED    价格/库存/优惠/归属校验失败
  *   CONFIRMING-> PENDING     下单入口异常且未落单，允许重试
  * </pre>
- * 终态为 {@link #CONFIRMED} / {@link #REJECTED} / {@link #EXPIRED}，不再迁移。
+ * 终态为 {@link #CONFIRMED} / {@link #REJECTED} / {@link #EXPIRED} / {@link #SUPERSEDED}，不再迁移。
  */
 public enum ProposalStatus {
 
@@ -31,7 +32,16 @@ public enum ProposalStatus {
     REJECTED,
 
     /** 已过期：超过允许确认的时限。 */
-    EXPIRED;
+    EXPIRED,
+
+    /**
+     * 已被新提议替代。
+     * <p>
+     * 一个用户同时只应有一份可确认的提议：否则页面上两张卡片都显示「待确认」，
+     * 用户点哪张都可能成单，而且第二张的购物车快照早已过期。生成新提议前把旧的 PENDING 顶掉，
+     * 卡片上会显示「已被新的提议替代」，避免用户点了才发现失效。
+     */
+    SUPERSEDED;
 
     /**
      * 判断是否为终态。终态禁止任何再次迁移。
@@ -39,6 +49,6 @@ public enum ProposalStatus {
      * @return true 表示不会再变化
      */
     public boolean isTerminal() {
-        return this == CONFIRMED || this == REJECTED || this == EXPIRED;
+        return this == CONFIRMED || this == REJECTED || this == EXPIRED || this == SUPERSEDED;
     }
 }

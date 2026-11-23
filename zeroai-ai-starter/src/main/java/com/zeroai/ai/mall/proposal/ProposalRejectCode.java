@@ -47,7 +47,9 @@ public enum ProposalRejectCode {
      */
     CONFIRM_TIMEOUT("订单创建超时，请到「我的订单」确认是否已生成"),
     /** 系统异常，允许重试。 */
-    SUBMIT_RETRYABLE("下单暂时失败，请稍后重试");
+    SUBMIT_RETRYABLE("下单暂时失败，请稍后重试"),
+    /** 已被新的提议替代：同一用户只保留一份可确认提议。 */
+    SUPERSEDED("已被新的下单提议替代，请查看最新那条");
 
     private final String message;
 

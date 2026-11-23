@@ -101,16 +101,39 @@ public class AiChatController {
         AgentChatHandler agentHandler = resolveAgentHandler();
         String sessionId = deriveSessionId(userId);
 
+        /*
+         * 先下发一条过程态再开跑。
+         * 实测首字延迟 1~4 秒（工具链路更长），此前这段时间页面上只有用户自己的气泡，
+         * 用户会以为请求卡死。这条事件让「已收到、正在处理」立刻可见，
+         * 后续真正的工具进度会以同名事件继续覆盖展示。
+         */
+        sink.send(AiEvent.of(AiEventType.THINKING, Map.of(
+                "status", "running",
+                "tool", "other",
+                "message", "正在理解你的问题")));
+
         if (agentHandler != null) {
-            log.info("AI 对话开始（Agent 通道），userId={}, sessionId={}, questionLength={}",
-                    userId, sessionId, question.length());
+            log.info("AI 对话分发 userId={} sessionId={} engine={} channel=agent questionLength={} preview=\"{}\"",
+                    userId, sessionId, properties.getEngine(), question.length(), preview(question));
             agentHandler.handle(sink, userId, sessionId, question);
             return sink.emitter();
         }
 
-        log.info("AI 对话开始（单轮通道），userId={}, questionLength={}", userId, question.length());
+        log.info("AI 对话分发 userId={} sessionId={} engine={} channel=single-turn questionLength={} preview=\"{}\"",
+                userId, sessionId, properties.getEngine(), question.length(), preview(question));
         streamWithChatClient(sink, userId, sessionId, question);
         return sink.emitter();
+    }
+
+    /**
+     * 问题预览：压成单行并截断，日志里只留判断问题所需的片段。
+     *
+     * @param question 用户问题
+     * @return 不超过 40 字的预览
+     */
+    private static String preview(String question) {
+        String flat = question.replaceAll("\\s+", " ").trim();
+        return flat.length() <= 40 ? flat : flat.substring(0, 40) + "…";
     }
 
     /**
@@ -166,6 +189,7 @@ public class AiChatController {
                             if (turn != null) {
                                 turn.success(0);
                             }
+                            log.info("单轮通道回答完成 userId={} sessionId={}", userId, sessionId);
                             sink.send(AiEvent.of(AiEventType.DONE, Map.of("steps", 0)));
                             sink.complete();
                         }));

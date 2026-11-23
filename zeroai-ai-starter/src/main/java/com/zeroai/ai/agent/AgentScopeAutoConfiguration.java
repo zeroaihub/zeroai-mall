@@ -11,6 +11,7 @@ import com.zeroai.ai.memory.UserPreferenceMemory;
 import com.zeroai.domain.api.cart.service.ICartService;
 import com.zeroai.domain.api.goods.service.IGoodsDetailService;
 import com.zeroai.domain.api.goods.service.IGoodsProductService;
+import com.zeroai.domain.api.goods.service.IGoodsService;
 import com.zeroai.domain.api.trade.service.IAddressService;
 import com.zeroai.domain.api.trade.service.IMobileOrderService;
 import org.slf4j.Logger;
@@ -56,6 +57,7 @@ public class AgentScopeAutoConfiguration {
      * @param harness             Harness 能力开关
      * @param searchPortProvider  检索端口提供者，可为空
      * @param goodsDetailService  商品详情服务
+     * @param goodsService        商品服务（按 ID 回显商品卡）
      * @param goodsProductService 商品货品服务（只读用途）
      * @param mobileOrderService  订单服务（只读用途）
      * @param addressService      地址服务（只读用途）
@@ -71,6 +73,7 @@ public class AgentScopeAutoConfiguration {
                                              HarnessProperties harness,
                                              ObjectProvider<MallSearchPort> searchPortProvider,
                                              IGoodsDetailService goodsDetailService,
+                                             IGoodsService goodsService,
                                              IGoodsProductService goodsProductService,
                                              IMobileOrderService mobileOrderService,
                                              IAddressService addressService,
@@ -90,6 +93,7 @@ public class AgentScopeAutoConfiguration {
                 harness,
                 searchPortProvider.getIfAvailable(),
                 goodsDetailService,
+                goodsService,
                 goodsProductService,
                 mobileOrderService,
                 addressService,

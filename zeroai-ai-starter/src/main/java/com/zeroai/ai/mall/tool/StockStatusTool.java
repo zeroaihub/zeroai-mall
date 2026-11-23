@@ -3,6 +3,8 @@ package com.zeroai.ai.mall.tool;
 import com.zeroai.domain.api.goods.entity.GoodsProduct;
 import com.zeroai.domain.api.goods.service.IGoodsProductService;
 import io.agentscope.core.tool.Tool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 只读工具：SKU 库存查询。
@@ -15,6 +17,8 @@ import io.agentscope.core.tool.Tool;
  * 代价是无法按 skuId 精确查询。
  */
 public class StockStatusTool {
+
+    private static final Logger log = LoggerFactory.getLogger(StockStatusTool.class);
 
     private final IGoodsProductService goodsProductService;
 
@@ -36,6 +40,7 @@ public class StockStatusTool {
             readOnly = true,
             concurrencySafe = true)
     public String getStockStatus(Long skuId) {
+        log.info("工具调用 get_stock_status skuId={}", skuId);
         if (skuId == null) {
             return "{\"error\":\"MISSING_SKU_ID\",\"hint\":\"需要先通过 get_product_detail 拿到 skuId\"}";
         }
@@ -44,15 +49,19 @@ public class StockStatusTool {
         try {
             sku = goodsProductService.getById(skuId);
         } catch (RuntimeException e) {
+            log.warn("工具失败 get_stock_status skuId={} error={}", skuId, e.getMessage());
             return "{\"error\":\"STOCK_UNAVAILABLE\",\"hint\":\"库存查询失败，请稍后再试\"}";
         }
         if (sku == null) {
+            log.info("工具结果 get_stock_status skuId={} found=false", skuId);
             return "{\"error\":\"SKU_NOT_FOUND\",\"hint\":\"该规格不存在，请确认规格后再查\"}";
         }
 
         Integer available = sku.getNumber();
         Integer locked = sku.getLockedStock();
         boolean inStock = available != null && available > 0;
+        log.info("工具结果 get_stock_status skuId={} available={} locked={} inStock={}",
+                skuId, available, locked, inStock);
 
         return "{\"skuId\":" + ToolJson.num(skuId)
                 + ",\"availableStock\":" + ToolJson.num(available)

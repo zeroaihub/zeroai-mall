@@ -1,5 +1,6 @@
 package com.zeroai.ai.mall.proposal;
 
+import com.zeroai.ai.mall.event.CartSelection;
 import com.zeroai.ai.mall.proposal.entity.AiActionProposal;
 import com.zeroai.ai.mall.proposal.mapper.AiActionProposalMapper;
 import com.zeroai.ai.mall.proposal.vo.ConfirmResVO;
@@ -604,6 +605,77 @@ class ActionProposalServiceTest {
     }
 
     // ---------- 测试脚手架 ----------
+
+    // ---------- 弹层勾选下单 ----------
+
+    @Test
+    @DisplayName("准备下单时取默认地址，并把整份购物车（含未勾选）下发给弹层")
+    void prepareSelectionResolvesDefaultAddressAndMapsCart() {
+        Address address = new Address();
+        address.setId(7L);
+        address.setMemberId(USER_ID);
+        address.setName("张三");
+        address.setTel("13800138000");
+        address.setProvince("浙江省");
+        address.setCity("杭州市");
+        address.setCounty("西湖区");
+        address.setAddressDetail("文三路 1 号");
+        when(addressService.list(
+                org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<Address>>any()))
+                .thenReturn(List.of(address));
+        givenCart(10L, 30L, new BigDecimal("20.00"), 2);
+
+        CartSelection selection = service.prepareCartSelection(USER_ID, null, null);
+
+        assertNotNull(selection);
+        assertEquals(7L, selection.addressId(), "未指定地址时必须解析出默认地址");
+        assertTrue(selection.addressText().contains("张三"), selection.addressText());
+        assertTrue(selection.addressText().contains("138****8000"), "手机号必须脱敏：" + selection.addressText());
+        assertFalse(selection.addressText().contains("13800138000"), "不得下发完整手机号");
+        assertEquals(1, selection.items().size());
+        assertEquals(2, selection.totalNumber());
+    }
+
+    @Test
+    @DisplayName("没有任何收货地址时准备下单直接失败，不弹空壳弹层")
+    void prepareSelectionRequiresAddress() {
+        when(addressService.list(
+                org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<Address>>any()))
+                .thenReturn(List.of());
+
+        assertThrows(BusinessException.class, () -> service.prepareCartSelection(USER_ID, null, null));
+    }
+
+    @Test
+    @DisplayName("购物车为空时准备下单返回 null，由工具层引导用户先加购")
+    void prepareSelectionReturnsNullOnEmptyCart() {
+        Address address = new Address();
+        address.setId(7L);
+        address.setMemberId(USER_ID);
+        when(addressService.list(
+                org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<Address>>any()))
+                .thenReturn(List.of(address));
+        when(cartService.list(
+                org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<Cart>>any()))
+                .thenReturn(List.of());
+
+        assertNull(service.prepareCartSelection(USER_ID, null, null));
+    }
+
+    // ---------- 提议唯一 ----------
+
+    @Test
+    @DisplayName("生成新提议前先作废该用户其余待确认提议，保证同时只有一条可确认")
+    void createSupersedesPreviousPendingProposals() throws Exception {
+        givenAddressOwned();
+        givenCart(10L, 30L, new BigDecimal("20.00"), 2);
+        when(proposalMapper.selectByIdempotencyKey(eq(USER_ID), anyString())).thenReturn(null);
+        when(proposalMapper.insert(org.mockito.ArgumentMatchers.<AiActionProposal>any())).thenReturn(1);
+
+        service.createOrderProposal(USER_ID, 1L, null, List.of(10L));
+
+        verify(proposalMapper).supersedePending(eq(USER_ID), any());
+    }
 
     private void givenAddressOwned() {
         Address address = new Address();

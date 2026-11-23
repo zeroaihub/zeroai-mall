@@ -39,6 +39,7 @@
         <div class="ai-msg__main">
           <!-- 过程态：把 Agent 调了哪些工具显式展示出来，而不是只留一个转圈 -->
           <div v-if="message.steps.length" class="ai-steps">
+            <span class="ai-steps__label">思考过程</span>
             <span
               v-for="(step, index) in message.steps"
               :key="index"
@@ -64,6 +65,41 @@
 
           <div v-if="message.content" class="ai-msg__bubble">
             {{ message.content }}
+          </div>
+
+          <!-- 首字未到时的占位：避免用户以为请求卡死 -->
+          <div
+            v-else-if="sending && !message.proposal && !message.error && !message.products.length"
+            class="ai-msg__bubble ai-msg__bubble--pending"
+          >
+            <span class="ai-typing"><i></i><i></i><i></i></span>
+          </div>
+
+          <!-- 商品卡：对话内直接加购，不必跳到商品页再回来 -->
+          <div v-if="message.products.length" class="ai-products">
+            <div v-for="card in message.products" :key="card.goodsId" class="ai-product">
+              <div class="ai-product__thumb">
+                <img v-if="card.picUrl" :src="card.picUrl" :alt="card.name" />
+                <span v-else class="ai-product__placeholder">零</span>
+              </div>
+              <div class="ai-product__body">
+                <p class="ai-product__name">{{ card.name }}</p>
+                <div class="ai-product__meta">
+                  <span class="ai-product__price">￥{{ card.price }}</span>
+                  <span class="ai-product__sales">已售 {{ card.sales || 0 }}</span>
+                </div>
+              </div>
+              <van-button
+                class="ai-product__btn"
+                size="mini"
+                round
+                :type="card.added ? 'default' : 'primary'"
+                :loading="card.adding"
+                :disabled="card.added"
+                @click="handleAddCart(card)"
+                >{{ card.added ? '已加入' : '加入购物车' }}</van-button
+              >
+            </div>
           </div>
 
           <!-- 下单提议：Agent 只能生成提议，真正的写入口是这里的确认按钮 -->
@@ -101,6 +137,12 @@
               />
               <span v-else-if="message.proposal.state === 'confirmed'" class="ai-proposal__ok">
                 已提交，订单号 {{ message.proposal.orderSn }}
+              </span>
+              <span
+                v-else-if="message.proposal.state === 'superseded'"
+                class="ai-proposal__fail"
+              >
+                已被新的下单提议替代，请以最新那条为准
               </span>
               <span v-else class="ai-proposal__fail">
                 {{ message.proposal.error || '确认失败，请重新让助手生成提议' }}
@@ -153,19 +195,72 @@
         >
       </div>
     </div>
+
+    <!-- 下单前勾选商品：把「去购物车勾选」搬进对话，勾完直接生成提议 -->
+    <van-popup
+      v-model:show="cartVisible"
+      position="bottom"
+      round
+      closeable
+      class="ai-cart-popup"
+      :style="{ maxHeight: '78vh' }"
+    >
+      <div class="ai-cart">
+        <div class="ai-cart__head">
+          <h3 class="ai-cart__title">选择要下单的商品</h3>
+          <p class="ai-cart__addr">
+            <van-icon name="location-o" />
+            {{ cartSelect.addressText || '还没有收货地址' }}
+          </p>
+        </div>
+
+        <div class="ai-cart__list">
+          <label v-for="item in cartSelect.items" :key="item.cartId" class="ai-cart__row">
+            <van-checkbox v-model="item.checked" shape="square" />
+            <div class="ai-cart__thumb">
+              <img v-if="item.picUrl" :src="item.picUrl" :alt="item.goodsName" />
+              <span v-else class="ai-cart__placeholder">零</span>
+            </div>
+            <div class="ai-cart__info">
+              <p class="ai-cart__name">{{ item.goodsName }}</p>
+              <p class="ai-cart__price">￥{{ item.unitPrice }} × {{ item.number }}</p>
+            </div>
+          </label>
+        </div>
+
+        <div class="ai-cart__foot">
+          <div class="ai-cart__sum">
+            <span class="ai-cart__sum-label">已选 {{ selectedCartCount }} 件</span>
+            <strong class="ai-cart__sum-amount">￥{{ selectedCartAmount }}</strong>
+          </div>
+          <van-button
+            type="primary"
+            round
+            class="ai-cart__submit"
+            :loading="cartSelect.submitting"
+            :disabled="!selectedCartCount"
+            @click="handleSubmitCart"
+            >生成下单提议</van-button
+          >
+        </div>
+      </div>
+    </van-popup>
   </div>
 </template>
 
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, toRefs, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRefs, watch } from 'vue'
 
 import {
+  addProductToCart,
   aiChatState,
   clearSession,
+  closeCartSelection,
   confirmProposal,
   ensureHistory,
   sendMessage,
-  stopStream
+  stopStream,
+  submitCartSelection
 } from '@/store/aiChat'
 
 const suggestions = [
@@ -183,6 +278,36 @@ const question = ref('')
  * 所以「切走再回来」能接着看到完整结果，而不是一段消失的空气泡。
  */
 const { messages, sending, loadingHistory } = toRefs(aiChatState)
+
+/** 购物车勾选弹层状态。 */
+const cartSelect = computed(() => aiChatState.cartSelect)
+
+/** 弹层显隐：用 computed 双向绑定，关闭时统一走 store 的关闭动作。 */
+const cartVisible = computed({
+  get: () => aiChatState.cartSelect.visible,
+  set: (value) => {
+    if (!value) {
+      closeCartSelection()
+    }
+  }
+})
+
+/** 已勾选的购物车行。 */
+const selectedCartItems = computed(() => aiChatState.cartSelect.items.filter((item) => item.checked))
+
+/** 已勾选件数（按数量累加，与购物车页口径一致）。 */
+const selectedCartCount = computed(() =>
+  selectedCartItems.value.reduce((total, item) => total + (item.number || 0), 0)
+)
+
+/** 已勾选金额，仅用于弹层内的即时估算；最终金额以服务端提议为准。 */
+const selectedCartAmount = computed(() => {
+  const amount = selectedCartItems.value.reduce(
+    (total, item) => total + Number(item.unitPrice || 0) * (item.number || 0),
+    0
+  )
+  return amount.toFixed(2)
+})
 
 /** 滚动到底部，让流式输出的最新内容始终可见。 */
 const scrollToBottom = () => {
@@ -238,6 +363,16 @@ const handleClear = () => {
 /** 确认下单：走后端确认接口，卡片状态由 store 维护。 */
 const handleConfirm = (message) => {
   confirmProposal(message)
+}
+
+/** 商品卡加购：写购物车，不创建订单。 */
+const handleAddCart = (card) => {
+  addProductToCart(card)
+}
+
+/** 提交购物车勾选，生成待确认提议。 */
+const handleSubmitCart = () => {
+  submitCartSelection()
 }
 
 onMounted(() => {
@@ -473,7 +608,13 @@ onBeforeUnmount(() => {
 .ai-steps {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 12px;
+
+  &__label {
+    font-size: 21px;
+    color: var(--wb-text-tertiary);
+  }
 
   &__item {
     display: inline-flex;
@@ -497,6 +638,262 @@ onBeforeUnmount(() => {
 
   &__icon {
     font-size: 22px;
+  }
+}
+
+/* 首字未到时的三点占位：让「已收到、正在处理」立刻可见 */
+.ai-msg__bubble--pending {
+  padding: 28px 26px;
+}
+
+.ai-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+
+  i {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--wb-text-tertiary);
+    animation: ai-typing-blink 1.2s infinite ease-in-out;
+
+    &:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    &:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+  }
+}
+
+@keyframes ai-typing-blink {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+/* 商品卡：固定高度的一行，图 / 名称 / 价格 / 销量 / 加购按钮，避免图片撑满整屏 */
+.ai-products {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ai-product {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border-radius: var(--wb-radius-soft);
+  background: var(--wb-surface-elevated);
+  border: 1px solid var(--wb-border);
+  box-shadow: var(--wb-shadow-card);
+
+  &__thumb {
+    flex: none;
+    width: 96px;
+    height: 96px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--wb-surface-subtle);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: cover;
+    }
+  }
+
+  &__placeholder {
+    font-size: 26px;
+    color: var(--wb-text-tertiary);
+  }
+
+  &__body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  &__name {
+    margin: 0;
+    font-size: 24px;
+    line-height: 1.3;
+    color: var(--wb-text);
+    /* 固定单行：名称长短不影响卡片高度，也不会把价格挤到第二屏 */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__meta {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    white-space: nowrap;
+  }
+
+  &__price {
+    font-size: 28px;
+    font-weight: 600;
+    color: #ff3b30;
+  }
+
+  &__sales {
+    font-size: 20px;
+    color: var(--wb-text-tertiary);
+  }
+
+  &__btn {
+    flex: none;
+    width: 168px;
+    height: 52px;
+    padding: 0;
+    font-size: 24px;
+    border-radius: 26px;
+  }
+}
+
+/* 购物车勾选弹层 */
+.ai-cart-popup {
+  border-radius: 24px 24px 0 0;
+}
+
+.ai-cart {
+  display: flex;
+  flex-direction: column;
+  max-height: 78vh;
+  padding: 32px 24px calc(24px + env(safe-area-inset-bottom));
+
+  &__head {
+    padding-right: 48px;
+  }
+
+  &__title {
+    margin: 0;
+    font-size: 30px;
+    font-weight: 600;
+    color: var(--wb-text);
+  }
+
+  &__addr {
+    margin: 10px 0 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 22px;
+    line-height: 1.4;
+    color: var(--wb-text-secondary);
+  }
+
+  &__list {
+    flex: 1;
+    margin-top: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px;
+    border-radius: var(--wb-radius-soft);
+    background: var(--wb-surface-subtle);
+  }
+
+  &__thumb {
+    flex: none;
+    width: 80px;
+    height: 80px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--wb-surface-elevated);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+  }
+
+  &__placeholder {
+    font-size: 24px;
+    color: var(--wb-text-tertiary);
+  }
+
+  &__info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__name {
+    margin: 0;
+    font-size: 24px;
+    line-height: 1.4;
+    color: var(--wb-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__price {
+    margin: 8px 0 0;
+    font-size: 22px;
+    color: var(--wb-text-secondary);
+  }
+
+  &__foot {
+    margin-top: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  &__sum {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  &__sum-label {
+    font-size: 21px;
+    color: var(--wb-text-tertiary);
+  }
+
+  &__sum-amount {
+    font-size: 32px;
+    color: #ff3b30;
+  }
+
+  &__submit {
+    min-width: 240px;
+    height: 76px;
+    font-size: 26px;
   }
 }
 

@@ -1,5 +1,6 @@
 package com.zeroai.ai.prompt;
 
+import com.zeroai.ai.mall.tool.AddToCartTool;
 import com.zeroai.ai.mall.tool.GoodsDetailTool;
 import com.zeroai.ai.mall.tool.ListMyAddressesTool;
 import com.zeroai.ai.mall.tool.ListMyCartTool;
@@ -7,6 +8,7 @@ import com.zeroai.ai.mall.tool.MyOrdersTool;
 import com.zeroai.ai.mall.tool.ProposeOrderTool;
 import com.zeroai.ai.mall.tool.SearchKnowledgeTool;
 import com.zeroai.ai.mall.tool.SearchProductsTool;
+import com.zeroai.ai.mall.tool.ShowProductsTool;
 import com.zeroai.ai.mall.tool.StockStatusTool;
 import io.agentscope.core.tool.Tool;
 import org.junit.jupiter.api.DisplayName;
@@ -37,10 +39,10 @@ class PromptBudgetTest {
     /** 单个工具描述字符上限。 */
     private static final int MAX_TOOL_DESCRIPTION_CHARS = 260;
 
-    /** 全部工具描述合计字符上限。 */
-    private static final int MAX_TOTAL_TOOL_DESCRIPTION_CHARS = 700;
+    /** 全部工具描述合计字符上限。10 个工具，均摊 88 字符——仍要求每段都写「只读什么」而非长篇说明。 */
+    private static final int MAX_TOTAL_TOOL_DESCRIPTION_CHARS = 880;
 
-    /** Agent 通道会被注册的 8 个工具类。 */
+    /** Agent 通道会被注册的 10 个工具类。 */
     private static final List<Class<?>> TOOL_CLASSES = List.of(
             SearchProductsTool.class,
             GoodsDetailTool.class,
@@ -49,6 +51,8 @@ class PromptBudgetTest {
             MyOrdersTool.class,
             ListMyAddressesTool.class,
             ListMyCartTool.class,
+            AddToCartTool.class,
+            ShowProductsTool.class,
             ProposeOrderTool.class);
 
     /** 无论怎么精简都不允许丢掉的约束片段。 */

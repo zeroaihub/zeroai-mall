@@ -7,6 +7,8 @@ import com.zeroai.domain.api.trade.response.OrderListDataResVO;
 import com.zeroai.domain.api.trade.response.OrderListResVO;
 import com.zeroai.domain.api.trade.service.IMobileOrderService;
 import io.agentscope.core.tool.Tool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
@@ -20,6 +22,8 @@ import java.util.List;
  * 未登录用户不会注册本工具（见 {@code MallAgentFactory}），因此不存在匿名查询订单的可能。
  */
 public class MyOrdersTool {
+
+    private static final Logger log = LoggerFactory.getLogger(MyOrdersTool.class);
 
     /** 单次返回订单数上限。 */
     private static final int MAX_LIMIT = 5;
@@ -56,11 +60,13 @@ public class MyOrdersTool {
             concurrencySafe = true)
     public String listMyOrders(Integer limit) {
         int size = limit == null ? 3 : Math.min(Math.max(limit, 1), MAX_LIMIT);
+        log.info("工具调用 list_my_orders userId={} limit={}", userId, size);
 
         OrderListResVO result;
         try {
             result = mobileOrderService.selectListPage(new Page<>(1, size), SHOW_TYPE_ALL, userId);
         } catch (RuntimeException e) {
+            log.warn("工具失败 list_my_orders userId={} error={}", userId, e.getMessage());
             return "{\"error\":\"ORDER_QUERY_FAILED\",\"hint\":\"订单查询失败，请稍后再试\"}";
         }
 
@@ -80,6 +86,7 @@ public class MyOrdersTool {
                         .append('}');
             }
         }
+        log.info("工具结果 list_my_orders userId={} count={}", userId, orders == null ? 0 : orders.size());
         return sb.append("]}").toString();
     }
 

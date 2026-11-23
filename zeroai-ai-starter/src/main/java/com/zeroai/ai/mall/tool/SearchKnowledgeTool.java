@@ -3,6 +3,8 @@ package com.zeroai.ai.mall.tool;
 import com.zeroai.ai.knowledge.KnowledgeHit;
 import com.zeroai.ai.knowledge.KnowledgeService;
 import io.agentscope.core.tool.Tool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
@@ -18,6 +20,8 @@ import java.util.List;
  * 不接收任何身份信息，知识库本身也只收录公开规则，因此不存在「查知识库查出别人的订单」这条路径。
  */
 public class SearchKnowledgeTool {
+
+    private static final Logger log = LoggerFactory.getLogger(SearchKnowledgeTool.class);
 
     /** 缺省返回片段数。 */
     private static final int DEFAULT_LIMIT = 3;
@@ -53,7 +57,10 @@ public class SearchKnowledgeTool {
         if (knowledgeService == null) {
             return "{\"status\":\"UNAVAILABLE\",\"count\":0,\"hint\":\"知识库未启用，请告知用户暂时查不到政策，不要编造。\"}";
         }
+        log.info("工具调用 search_knowledge query=\"{}\" limit={}", query, limit);
         KnowledgeService.Result result = knowledgeService.search(query, limit == null ? DEFAULT_LIMIT : limit);
+        log.info("工具结果 search_knowledge query=\"{}\" status={} hits={}", result.query(), result.status(),
+                result.hits() == null ? 0 : result.hits().size());
         return switch (result.status()) {
             case EMPTY_QUERY -> "{\"status\":\"EMPTY_QUERY\",\"count\":0,"
                     + "\"hint\":\"缺少检索问题，请先明确用户想了解哪条规则。\"}";

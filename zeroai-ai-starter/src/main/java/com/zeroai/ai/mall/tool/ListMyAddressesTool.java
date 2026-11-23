@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.zeroai.domain.api.trade.entity.Address;
 import com.zeroai.domain.api.trade.service.IAddressService;
 import io.agentscope.core.tool.Tool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
@@ -15,6 +17,8 @@ import java.util.List;
  * 完整地址只在原下单链路里由用户自己在页面上看到。
  */
 public class ListMyAddressesTool {
+
+    private static final Logger log = LoggerFactory.getLogger(ListMyAddressesTool.class);
 
     /** 单次返回地址数上限。 */
     private static final int MAX_LIMIT = 5;
@@ -46,6 +50,7 @@ public class ListMyAddressesTool {
             concurrencySafe = true)
     public String listMyAddresses(Integer limit) {
         int size = limit == null ? 3 : Math.min(Math.max(limit, 1), MAX_LIMIT);
+        log.info("工具调用 list_my_addresses userId={} limit={}", userId, size);
         List<Address> addresses;
         try {
             addresses = addressService.list(Wrappers.lambdaQuery(Address.class)
@@ -53,9 +58,11 @@ public class ListMyAddressesTool {
                     .eq(Address::getDelFlag, false)
                     .last("LIMIT " + size));
         } catch (RuntimeException e) {
+            log.warn("工具失败 list_my_addresses userId={} error={}", userId, e.getMessage());
             return "{\"error\":\"ADDRESS_UNAVAILABLE\",\"hint\":\"地址查询失败，请稍后再试\"}";
         }
         if (addresses == null || addresses.isEmpty()) {
+            log.info("工具结果 list_my_addresses userId={} count=0", userId);
             return "{\"count\":0,\"addresses\":[],\"hint\":\"还没有收货地址，请提示用户先在页面添加\"}";
         }
         StringBuilder sb = new StringBuilder(128 + addresses.size() * 128);
@@ -72,6 +79,8 @@ public class ListMyAddressesTool {
                     .append(",\"isDefault\":").append(address.isDefault())
                     .append('}');
         }
+        log.info("工具结果 list_my_addresses userId={} count={} defaultId={}", userId, addresses.size(),
+                addresses.stream().filter(Address::isDefault).map(Address::getId).findFirst().orElse(null));
         return sb.append("]}").toString();
     }
 

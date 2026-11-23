@@ -142,6 +142,25 @@ export function fetchAiHistory(limit = 20) {
 }
 
 /**
+ * 按用户在对话内勾选的商品生成下单提议。
+ *
+ * 勾选是用户在页面上的确定性动作，因此不绕模型：直接落一条待确认提议并把结果回给页面，
+ * 用户再点「确认下单」才真正创建订单。地址留空时服务端取默认地址。
+ *
+ * @param {{addressId?: number, userCouponId?: number, cartIds: number[]}} payload 勾选结果
+ * @returns {Promise<{code: number, data: object}>} 提议视图
+ */
+export function createProposalFromCart({ addressId, userCouponId, cartIds }) {
+  return request({
+    url: '/ai/action/proposal',
+    method: 'post',
+    data: { addressId, userCouponId, cartIds },
+    // 生成提议要查购物车、算价、校验地址，比普通查询慢
+    timeout: 15000
+  })
+}
+
+/**
  * 清空当前用户的服务端历史记录。
  *
  * @returns {Promise<{code: number, data: number}>} data 为删除条数

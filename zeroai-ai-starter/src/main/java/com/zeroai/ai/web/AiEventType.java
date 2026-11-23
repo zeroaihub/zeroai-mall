@@ -33,6 +33,16 @@ public final class AiEventType {
     public static final String CONFIRM_ACTION = "confirm_action";
 
     /**
+     * 加购成功，前端把商品卡标记为已加入购物车。
+     */
+    public static final String CART_ADDED = "cart_added";
+
+    /**
+     * 需要用户挑选下单商品，前端弹出购物车勾选层。
+     */
+    public static final String CART_SELECT = "cart_select";
+
+    /**
      * 本轮结束，携带步数与 token 统计。
      */
     public static final String DONE = "done";

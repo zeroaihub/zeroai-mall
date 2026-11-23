@@ -2,6 +2,7 @@ package com.zeroai.ai.web;
 
 import com.zeroai.ai.mall.proposal.ActionProposalService;
 import com.zeroai.ai.mall.proposal.vo.ConfirmResVO;
+import com.zeroai.ai.mall.proposal.vo.CreateProposalReqVO;
 import com.zeroai.ai.mall.proposal.vo.ProposalVO;
 import com.zeroai.util.exception.BusinessException;
 import com.zeroai.util.util.R;
@@ -11,8 +12,11 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 写操作提议确认入口。
@@ -42,6 +46,43 @@ public class ActionProposalController {
     public ActionProposalController(ActionProposalService proposalService, AiUserContext userContext) {
         this.proposalService = proposalService;
         this.userContext = userContext;
+    }
+
+    /**
+     * 按用户在对话内勾选的商品生成下单提议。
+     * <p>
+     * 为什么单独开一个接口而不是让模型再调一次工具：勾选是用户在页面上的确定性动作，
+     * 生成结果应当立刻返回给页面（金额、商品清单、有效期），不该再绕一圈模型，
+     * 否则用户勾完还要等一次模型往返，且模型可能改写商品清单。
+     * <p>
+     * 本接口<b>不创建订单</b>：只落一条待确认提议，确认仍走 {@code /confirm/{proposalNo}}。
+     *
+     * @param reqVO 勾选结果与可选地址、优惠券
+     * @return 提议视图
+     */
+    @PostMapping("proposal")
+    public R<ProposalVO> createProposal(@RequestBody CreateProposalReqVO reqVO) {
+        Long userId = userContext.currentUserId();
+        List<Long> cartIds = reqVO == null || reqVO.cartIds() == null ? List.of() : reqVO.cartIds();
+        log.info("按勾选生成下单提议开始, userId={}, addressId={}, couponId={}, cartCount={}",
+                userId, reqVO == null ? null : reqVO.addressId(),
+                reqVO == null ? null : reqVO.userCouponId(), cartIds.size());
+        if (cartIds.isEmpty()) {
+            return R.error(400, "请先勾选要下单的商品");
+        }
+        try {
+            ProposalVO vo = proposalService.createProposalForSelection(
+                    userId, reqVO.addressId(), reqVO.userCouponId(), cartIds);
+            log.info("按勾选生成下单提议完成, userId={}, proposalNo={}, actualPrice={}",
+                    userId, vo.proposalNo(), vo.actualPrice());
+            return R.success(vo);
+        } catch (BusinessException e) {
+            log.info("按勾选生成下单提议被拒, userId={}, msg={}", userId, e.getMsg());
+            return R.error(e.getCode() == null ? 500 : e.getCode(), e.getMsg());
+        } catch (IllegalStateException e) {
+            // 未登录等前置条件不满足：文案本身可读，直接下发
+            return R.error(401, e.getMessage());
+        }
     }
 
     /**

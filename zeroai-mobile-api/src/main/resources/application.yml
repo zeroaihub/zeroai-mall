@@ -7,6 +7,14 @@ spring:
     name: zeroai-mobile-api
   profiles:
     active: dev
+  # 本地开发读取仓库根的 .env（AI_ENABLED / LLM_* / AI_HISTORY_* 等开关都写在那里）。
+  # Spring Boot 不认 .env 后缀，用 [.properties] 显式指定按 properties 解析；
+  # optional: 保证文件不存在时静默跳过，不影响容器和线上启动。
+  # 同时列两条的原因：IDEA 运行配置的工作目录可能是仓库根，也可能是模块目录，两条互为兜底。
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:../.env[.properties]
   thymeleaf:
     cache: false
     suffix: .html

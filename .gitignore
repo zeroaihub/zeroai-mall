@@ -66,3 +66,6 @@ front/
 
 # 本地运行日志与验证产物（含启动日志、E2E 截图、临时脚本）
 logs/
+
+# pnpm 12 自动生成的 allowBuilds 占位文件，不属于项目配置
+pnpm-workspace.yaml

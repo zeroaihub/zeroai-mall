@@ -118,18 +118,20 @@ sequenceDiagram
 
 ### 2.2 工具矩阵
 
-Agent 手上只有 8 个工具，7 个只读、1 个只写提议：
+Agent 手上只有 10 个工具，8 个只读、1 个写购物车、1 个只写提议：
 
 | 工具 | 能力 | 性质 | 权限边界 |
 |---|---|:--:|---|
-| `search_products` | 关键词检索在售商品，返回 ID / 名称 / 价格 / 销量 | 读 | 仅上架商品 |
+| `search_products` | 关键词检索在售商品，返回候选池：ID / 名称 / 价格 / 销量 | 读 | 仅上架商品 |
+| `show_products` | 把模型挑中的商品按 ID 回显成卡片（可加购） | 读 | 只按 goodsId 取库，不接受任意查询条件 |
 | `get_product_detail` | 商品详情：名称、价格、简介、可选规格与库存 | 读 | — |
 | `get_stock_status` | 按 SKU 查可售库存与冻结库存 | 读 | 绝不改库存 |
 | `search_knowledge` | 检索售后、配送运费、下单支付、优惠券等政策文档，带 `sourceId` 与版本 | 读 | 只收公开政策，不含任何用户数据 |
 | `list_my_orders` | 当前用户订单：订单号、金额、状态、商品名 | 读 | 强制按 userId 过滤 |
 | `list_my_cart` | 当前用户购物车：cardId、商品名、单价、数量、勾选态 | 读 | 强制按 userId 过滤 |
 | `list_my_addresses` | 当前用户收货地址（姓名、手机号脱敏） | 读 | 强制按 userId 过滤 |
-| `propose_order` | 生成「创建订单」待确认提议 | **写（仅提议表）** | 不创建订单，只落一张 PENDING 记录 |
+| `add_to_cart` | 加购：把本轮搜到的商品放进购物车 | **写（购物车）** | 走购物车域既有入口，不建订单、不冻结库存 |
+| `propose_order` | 准备下单：默认弹购物车让用户勾选，显式点名商品时才直接建提议 | **写（仅提议表）** | 不创建订单，只落一张 PENDING 记录 |
 
 **没有的能力也明确写清**：退款、改地址、取消订单、加库存、物流轨迹——Agent 一律拒绝，而不是编一个答案。
 
@@ -159,14 +161,16 @@ flowchart LR
 
 | 事件 | 说明 | 前端渲染 |
 |---|---|---|
-| `thinking` | 过程态，如「正在查库存」 | 工具过程态 chip |
+| `thinking` | 过程态：请求一建立就下发「正在理解你的问题」，随后是「正在查库存」等工具进度 | 工具过程态 chip |
 | `tool_result` | 工具执行结果摘要 | 完成态 chip（✓） |
-| `message_delta` | 文本增量 | 打字机累加 |
+| `message_delta` | 文本增量 | 打字机队列（约 100 字/秒）平滑渲染 |
+| `product_cards` | 模型挑中的商品卡（goodsId / 名称 / 价格 / 销量 / 主图） | 单行商品卡 + 「加入购物车」 |
+| `cart_added` | 加购成功（cartId / 商品名 / 单价 / 数量） | 对应卡片标记「已加入」 |
+| `cart_select` | 需要用户勾选下单商品：默认地址 + 整份购物车 | 底部购物车勾选层 |
 | `confirm_action` | 待用户确认的写操作提议 | 提议卡片 + 「确认下单」 |
 | `done` | 本轮结束，携带 `steps` / `truncated` | 结束 loading |
 | `degrade` | 模型不可用，已降级到既有能力 | 轻提示，不打断 |
 | `error` | 错误码 + 友好文案 | 红色气泡 |
-| `product_cards` | 商品卡片列表（协议已定义，**尚未下发**） | — |
 
 > **为什么不用 `EventSource`**：它不能自定义请求头，而 `/ai/chat` 与 `/ai/history` 必须带 `Authorization`（唯一放行的匿名路径是只读的 `/ai/knowledge/**`，它只返回公开政策文档）。
 > 把 token 塞进 query 会进访问日志和浏览器历史，所以 H5 用 `fetch` + `ReadableStream` 手动解析 SSE。
@@ -379,7 +383,8 @@ MCP Server 使用 Streamable HTTP，默认关闭，启用后挂载在 `/mcp`。�
 
 | 工具 | 用途 | 关键限制 |
 |---|---|---|
-| `search_products` | 商品关键词搜索 | 最多 10 条 |
+| `search_products` | 商品关键词搜索（只召回候选，不判断是否匹配） | 最多 10 条 |
+| `show_products` | 按 AI 挑中的 goodsId 回显卡片 | 最多 3 条 |
 | `get_product_detail` | 商品与 SKU 摘要 | 不暴露 `lockedStock` |
 | `search_knowledge` | 公开政策检索 | 只返回 public 知识 |
 | `list_my_orders` | 当前 token 用户订单 | 参数中没有 `userId`，最多 5 条 |
@@ -414,10 +419,11 @@ python .\scripts\mcp\smoke_mcp.py --user-id 93 --client-id python-smoke
 
 | 事项 | 现状 | 下一步 |
 |---|---|---|
-| **商品卡片** | 协议位留好（`product_cards`），实际仍返回纯文本 | 搜索结果直接渲染成卡片，可点击进详情，减少一轮追问 |
+| **商品卡片** | 由 `show_products` 按 AI 挑中的 ID 下发，只展示符合条件的商品 | 卡片补数量选择与「进详情」入口 |
+| **勾选下单** | `propose_order` 默认弹购物车勾选层，勾完直接生成提议 | 弹层内支持选优惠券、切换收货地址 |
 | **首字延迟** | P95 7.0s，主要是 8.2k token 的上下文 | 精简 Prompt、裁剪 tool schema、流式前置，目标压到 3s 内 |
 | **步数收敛** | P95 6 步，接近上限 6 | 教模型合并查询（一次拿够），目标 P95 ≤ 4 |
-| **提议的强校验** | 模型偶发把未勾选商品计入提议 | 在 `ProposeOrderTool` 服务端兜底：未勾选项直接拒绝计入，不依赖 Prompt |
+| **提议唯一** | 生成新提议即作废该用户其余 PENDING（`SUPERSEDED`） | 作废时同步失效页面上旧的确认卡片（已实现前端标记） |
 | **记忆能力** | `UserPreferenceMemory` 已实现，默认关 | 灰度打开，先只记「类目偏好 / 预算区间」两类低风险事实 |
 | **会话级重置** | 清空历史只清 ES | 同步清 AgentScope session，否则模型还记得上一轮的购物车 |
 | **物流能力缺口** | 无物流工具，问「我的快递到哪了」只能答查不到 | 接快递 100 / 顺丰 API，作为第 9 个只读工具 |

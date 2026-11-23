@@ -5,10 +5,11 @@ import com.zeroai.ai.harness.AiObservabilityMiddleware;
 import com.zeroai.ai.harness.HarnessProperties;
 import com.zeroai.ai.harness.ToolSurfacePolicy;
 import com.zeroai.ai.knowledge.KnowledgeService;
+import com.zeroai.ai.mall.event.GuideUiEvents;
 import com.zeroai.ai.mall.port.MallSearchPort;
 import com.zeroai.ai.mall.proposal.ActionProposalProperties;
 import com.zeroai.ai.mall.proposal.ActionProposalService;
-import com.zeroai.ai.mall.proposal.vo.ProposalVO;
+import com.zeroai.ai.mall.tool.AddToCartTool;
 import com.zeroai.ai.mall.tool.GoodsDetailTool;
 import com.zeroai.ai.mall.tool.ListMyAddressesTool;
 import com.zeroai.ai.mall.tool.ListMyCartTool;
@@ -16,11 +17,13 @@ import com.zeroai.ai.mall.tool.MyOrdersTool;
 import com.zeroai.ai.mall.tool.ProposeOrderTool;
 import com.zeroai.ai.mall.tool.SearchKnowledgeTool;
 import com.zeroai.ai.mall.tool.SearchProductsTool;
+import com.zeroai.ai.mall.tool.ShowProductsTool;
 import com.zeroai.ai.mall.tool.StockStatusTool;
 import com.zeroai.ai.prompt.PromptLoader;
 import com.zeroai.domain.api.cart.service.ICartService;
 import com.zeroai.domain.api.goods.service.IGoodsDetailService;
 import com.zeroai.domain.api.goods.service.IGoodsProductService;
+import com.zeroai.domain.api.goods.service.IGoodsService;
 import com.zeroai.domain.api.trade.service.IAddressService;
 import com.zeroai.domain.api.trade.service.IMobileOrderService;
 import io.agentscope.core.model.Model;
@@ -40,7 +43,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.function.Consumer;
 
 /**
  * 商城 Agent 工厂。
@@ -66,6 +68,7 @@ public class MallAgentFactory {
     private final HarnessProperties harness;
     private final MallSearchPort searchPort;
     private final IGoodsDetailService goodsDetailService;
+    private final IGoodsService goodsService;
     private final IGoodsProductService goodsProductService;
     private final IMobileOrderService mobileOrderService;
     private final IAddressService addressService;
@@ -94,6 +97,7 @@ public class MallAgentFactory {
      * @param harness             Harness 能力开关
      * @param searchPort          检索端口，可为 null（此时搜索工具返回不可用，不影响其余工具）
      * @param goodsDetailService  商品详情服务
+     * @param goodsService        商品服务，仅用于按 ID 回显 AI 挑中的商品卡
      * @param goodsProductService 商品货品服务，仅用于只读查库存
      * @param mobileOrderService  订单服务，仅用于只读查本人订单
      * @param addressService     地址服务，仅用于只读查本人地址
@@ -106,6 +110,7 @@ public class MallAgentFactory {
                             HarnessProperties harness,
                             MallSearchPort searchPort,
                             IGoodsDetailService goodsDetailService,
+                            IGoodsService goodsService,
                             IGoodsProductService goodsProductService,
                             IMobileOrderService mobileOrderService,
                             IAddressService addressService,
@@ -121,6 +126,7 @@ public class MallAgentFactory {
         this.harness = harness == null ? new HarnessProperties() : harness;
         this.searchPort = searchPort;
         this.goodsDetailService = goodsDetailService;
+        this.goodsService = goodsService;
         this.goodsProductService = goodsProductService;
         this.mobileOrderService = mobileOrderService;
         this.addressService = addressService;
@@ -140,22 +146,22 @@ public class MallAgentFactory {
      * @return 可直接使用的 Agent，调用方负责 close()
      */
     public HarnessAgent create(MallAgentContext context) {
-        return create(context, null);
+        return create(context, GuideUiEvents.NOOP);
     }
 
     /**
-     * 为一次请求构建 Agent，并在提议生成时通过 {@code proposalListener} 推送 confirm_action 事件。
+     * 为一次请求构建 Agent，并通过 {@code events} 推送商品卡片、加购、购物车勾选与提议事件。
      *
-     * @param context          请求上下文，userId 必须来自服务端鉴权结果
-     * @param proposalListener 提议生成回调，可为 null
+     * @param context 请求上下文，userId 必须来自服务端鉴权结果
+     * @param events  前端事件出口，可为 null（等价于不推送）
      * @return 可直接使用的 Agent，调用方负责 close()
      */
-    public HarnessAgent create(MallAgentContext context, Consumer<ProposalVO> proposalListener) {
+    public HarnessAgent create(MallAgentContext context, GuideUiEvents events) {
         HarnessAgent.Builder builder = HarnessAgent.builder()
                 .name(AGENT_NAME)
                 .sysPrompt(systemPrompt)
                 .model(model)
-                .toolkit(buildToolkit(context, proposalListener))
+                .toolkit(buildToolkit(context, events))
                 .maxIters(properties.getMaxSteps())
                 .workspace(workspaceOf(context))
                 // 状态落到项目内可控目录，不用 SDK 默认的 ~/.agentscope/state
@@ -342,34 +348,40 @@ public class MallAgentFactory {
      * @return 已注册工具的工具集
      */
     Toolkit buildToolkit(MallAgentContext context) {
-        return buildToolkit(context, null);
+        return buildToolkit(context, GuideUiEvents.NOOP);
     }
 
     /**
      * 按请求上下文装配工具集。
      * <p>
-     * 工具面分三层：
+     * 工具面分四层：
      * <ol>
      *   <li>全量只读查询：搜索、详情、库存；</li>
      *   <li>规则知识检索：售后、配送、优惠券等公开政策（匿名也可用，只读）；</li>
-     *   <li>登录用户专属只读：订单、地址、购物车；</li>
-     *   <li>写操作提议（仅开启时）：{@code propose_order} 只生成待确认提议，
+     *   <li>登录用户专属：订单、地址、购物车（只读）与 {@code add_to_cart}（写购物车，不建订单）；</li>
+     *   <li>写操作提议（仅开启时）：{@code propose_order} 只下发待确认提议或弹出购物车选择，
      *       不创建订单；真正的写入口在独立确认接口。</li>
      * </ol>
-     * 知识检索只增加「读政策」的能力，不会因为命中某段文本就获得任何写权限：
-     * 写能力是否注册只由 {@code zeroai.ai.action.enabled} 决定，与知识库无关。
+     * 加购放开给登录用户而不加二次确认：它可逆、不涉及金额，且是「在对话里完成购物」的前提；
+     * 订单写入这一环没有被放宽——仍然只能由用户点确认按钮触发。
      *
-     * @param context          请求上下文，可为 null
-     * @param proposalListener 提议生成回调，可为 null
+     * @param context 请求上下文，可为 null
+     * @param events  前端事件出口，可为 null
      * @return 已注册工具的工具集
      */
-    Toolkit buildToolkit(MallAgentContext context, Consumer<ProposalVO> proposalListener) {
+    Toolkit buildToolkit(MallAgentContext context, GuideUiEvents events) {
+        GuideUiEvents sink = events == null ? GuideUiEvents.NOOP : events;
         Toolkit toolkit = new Toolkit();
         // 搜索工具按请求新建：它内部记着「本轮已搜几次」，复用会把次数跨请求累计
         int maxSearches = properties.getMaxSearchesPerTurn() == null
                 ? SearchProductsTool.DEFAULT_MAX_SEARCHES
                 : properties.getMaxSearchesPerTurn();
+        // 搜索只负责捞候选；卡片由 show_products 按模型挑中的 ID 回显，
+        // 展示哪些商品取决于模型对用户条件的判断，而不是检索的相关度排序
         toolkit.registerTool(new SearchProductsTool(searchPort, maxSearches));
+        if (goodsService != null) {
+            toolkit.registerTool(new ShowProductsTool(goodsService, sink));
+        }
         toolkit.registerTool(new GoodsDetailTool(goodsDetailService));
         toolkit.registerTool(new StockStatusTool(goodsProductService));
         if (knowledgeService != null) {
@@ -381,8 +393,9 @@ public class MallAgentFactory {
             toolkit.registerTool(new MyOrdersTool(mobileOrderService, userId));
             toolkit.registerTool(new ListMyAddressesTool(addressService, userId));
             toolkit.registerTool(new ListMyCartTool(cartService, userId));
+            toolkit.registerTool(new AddToCartTool(cartService, userId, sink));
             if (actionProposalService != null && actionProperties.isEnabled()) {
-                toolkit.registerTool(new ProposeOrderTool(actionProposalService, userId, proposalListener));
+                toolkit.registerTool(new ProposeOrderTool(actionProposalService, userId, sink));
             }
         }
         return toolkit;

@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS `ai_action_proposal` (
   `proposal_no` varchar(40) NOT NULL COMMENT '对外提议编号，随机不可枚举，避免横向探测他人提议',
   `user_id` bigint NOT NULL COMMENT '归属用户ID，来自服务端鉴权，确认时二次校验',
   `action_type` varchar(32) NOT NULL COMMENT '动作类型，当前仅 CREATE_ORDER',
-  `status` varchar(16) NOT NULL COMMENT '状态：PENDING/CONFIRMING/CONFIRMED/REJECTED/EXPIRED',
+  `status` varchar(16) NOT NULL COMMENT '状态：PENDING/CONFIRMING/CONFIRMED/REJECTED/EXPIRED/SUPERSEDED',
   `idempotency_key` char(43) NOT NULL COMMENT '幂等键，用户+地址+优惠券+购物车快照的 SHA-256 摘要',
   `address_id` bigint NOT NULL COMMENT '收货地址ID，确认时重新校验归属',
   `user_coupon_id` bigint DEFAULT NULL COMMENT '用户优惠券ID，可为空',
