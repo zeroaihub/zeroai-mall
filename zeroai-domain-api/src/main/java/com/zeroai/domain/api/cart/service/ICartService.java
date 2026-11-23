@@ -56,9 +56,10 @@ public interface ICartService extends IService<Cart> {
      *
      * @param cartId 购物车商品ID
      * @param number 商品数量
+     * @param userId 当前登录用户 ID，用于归属校验（不能改他人购物车）
      * @return r
      */
-    Boolean changeNum(Long cartId, Integer number);
+    Boolean changeNum(Long cartId, Integer number, Long userId);
 
     /**
      * 修改购物车勾选状态。

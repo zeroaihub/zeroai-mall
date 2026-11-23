@@ -62,10 +62,23 @@ class CartWriteSupportTest {
         when(tradeLockSupport.executeWithLock(anyString(), eq(2), any(), any()))
                 .thenAnswer(invocation -> invocation.<java.util.function.Supplier<Boolean>>getArgument(3).get());
 
-        assertTrue(cartWriteSupport.changeNum(1L, 4));
+        assertTrue(cartWriteSupport.changeNum(1L, 4, 9L));
 
         verify(cartMapper).updateById(any(Cart.class));
         verify(tradeLockSupport).executeWithLock(contains("9"), eq(2), any(), any());
+    }
+
+    @Test
+    void changeNumRejectsOtherUsersCart() {
+        Cart cart = new Cart();
+        cart.setId(1L);
+        // 购物车属于 8 号用户，却用 9 号身份去改：必须拒绝，否则改数量就是越权写
+        cart.setUserId(8);
+        when(cartMapper.selectById(1L)).thenReturn(cart);
+
+        assertThrows(BusinessException.class, () -> cartWriteSupport.changeNum(1L, 4, 9L));
+
+        verify(cartMapper, never()).updateById(any(Cart.class));
     }
 
     @Test

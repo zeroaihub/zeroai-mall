@@ -33,8 +33,10 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * 写操作提议服务：生成待确认提议、执行确认、状态迁移。
@@ -232,20 +234,15 @@ public class ActionProposalService {
      * @return 购物车与地址快照；购物车为空时返回 null
      * @throws BusinessException 用户没有任何可用收货地址
      */
-    public CartSelection prepareCartSelection(Long userId, Long addressId, Long userCouponId) {
+    public CartSelection prepareCartSelection(Long userId, Long addressId, Long userCouponId,
+                                              List<Long> cartIds) {
         if (userId == null) {
             throw new IllegalStateException("未登录用户不允许准备下单");
         }
         Address address = resolveAddress(userId, addressId);
-        log.info("准备下单选择 userId={} 解析地址 addressId={} requested={}", userId, address.getId(), addressId);
-        List<Cart> carts;
-        try {
-            carts = cartService.list(Wrappers.lambdaQuery(Cart.class)
-                    .eq(Cart::getUserId, userId)
-                    .orderByDesc(Cart::getId));
-        } catch (RuntimeException e) {
-            throw new BusinessException("购物车读取失败，请稍后再试");
-        }
+        log.info("准备下单选择 userId={} 解析地址 addressId={} requested={} cartIds={}",
+                userId, address.getId(), addressId, cartIds);
+        List<Cart> carts = loadSelectionCarts(userId, normalizeCartIds(cartIds));
         if (carts == null || carts.isEmpty()) {
             return null;
         }
@@ -265,6 +262,41 @@ public class ActionProposalService {
         log.info("准备下单选择完成 userId={} addressId={} itemCount={} totalNumber={}",
                 userId, address.getId(), items.size(), totalNumber);
         return new CartSelection(address.getId(), addressText(address), userCouponId, items, totalNumber);
+    }
+
+    /**
+     * 读取本次要展示给用户的购物车行。
+     * <p>
+     * 有 {@code cartIds} 时只取这些行——用户说「把小米手机下单」，弹层就不该把整份购物车倒出来；
+     * 无 {@code cartIds} 时退回全量（用户说的是「购物车都下单」或模型没能判断）。
+     * <p>
+     * 缺失的 ID 直接跳过而不是报错：模型手里的 ID 可能来自几轮前，购物车里删掉一行不该让整轮回答失败；
+     * 全缺失时返回空列表，由上层给出「购物车为空」的提示。
+     *
+     * @param userId   当前登录用户 ID
+     * @param requested 已规范化的购物车 ID，可为空
+     * @return 购物车行，按 {@code requested} 顺序；无匹配时返回空列表
+     */
+    private List<Cart> loadSelectionCarts(Long userId, List<Long> requested) {
+        try {
+            if (requested.isEmpty()) {
+                return cartService.list(Wrappers.lambdaQuery(Cart.class)
+                        .eq(Cart::getUserId, userId)
+                        .orderByDesc(Cart::getId));
+            }
+            List<Cart> found = cartService.list(Wrappers.lambdaQuery(Cart.class)
+                    .eq(Cart::getUserId, userId)
+                    .in(Cart::getId, requested));
+            if (found == null || found.isEmpty()) {
+                return List.of();
+            }
+            // 按模型给的顺序回显：它通常按用户提到的先后排过
+            Map<Long, Cart> byId = found.stream()
+                    .collect(Collectors.toMap(Cart::getId, cart -> cart, (first, second) -> first));
+            return requested.stream().map(byId::get).filter(Objects::nonNull).toList();
+        } catch (RuntimeException e) {
+            throw new BusinessException("购物车读取失败，请稍后再试");
+        }
     }
 
     /**

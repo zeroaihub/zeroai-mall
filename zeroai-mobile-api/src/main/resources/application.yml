@@ -109,7 +109,9 @@ zeroai:
     max-tokens: 1024
     system-prompt: prompts/guide-system.st
     chat-path: /ai/chat
-    sse-timeout-ms: 120000      # 显式设置，避免容器默认 30s 截断长回答
+    # 多步工具链（检索→详情→挑选→展示/下单）常见 60~90s，120s 会把接近完成的回答掐断，
+    # 用户侧表现为「卡片出来了但对话没有结论」。给到 5 分钟，仍由客户端主动停止兜底
+    sse-timeout-ms: 300000
     max-steps: 6
     max-tool-calls-per-turn: 6
     # 单轮 search_products 次数上限：基线里模型对稀疏结果会连搜 5 次，

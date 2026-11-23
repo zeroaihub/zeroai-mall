@@ -80,8 +80,8 @@ public class CartServiceImpl extends ServiceImpl<CartMapper, Cart> implements IC
      * @return 是否修改成功
      */
     @Override
-    public Boolean changeNum(Long cartId, Integer number) {
-        return cartWriteSupport.changeNum(cartId, number);
+    public Boolean changeNum(Long cartId, Integer number, Long userId) {
+        return cartWriteSupport.changeNum(cartId, number, userId);
     }
 
     /**

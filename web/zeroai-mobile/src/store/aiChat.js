@@ -10,7 +10,7 @@ import {
   fetchOrderProposal,
   streamAgentChat
 } from '@/api/ai'
-import { addDefaultGoodsProduct, updateCart } from '@/api/cart'
+import { addDefaultGoodsProduct, changeNumber, updateCart } from '@/api/cart'
 import { getToken } from '@/utils/auth'
 import router from '@/router'
 
@@ -41,6 +41,7 @@ const TOOL_DONE_TEXT = {
   list_my_addresses: '已核对地址',
   list_my_cart: '已查看购物车',
   add_to_cart: '已加入购物车',
+  show_products: '已展示商品',
   propose_order: '已准备下单'
 }
 
@@ -85,7 +86,9 @@ export const aiChatState = reactive({
     addressId: null,
     addressText: '',
     userCouponId: null,
-    items: []
+    items: [],
+    /** 触发弹层的那条消息；关闭后靠它把「重新选择商品」按钮挂回原消息。 */
+    messageId: null
   }
 })
 
@@ -223,6 +226,8 @@ function createMessage(role) {
     steps: [],
     /** 本轮搜索结果对应的商品卡，带「加入购物车」按钮。 */
     products: [],
+    /** 本轮弹过购物车勾选层的原始载荷，关掉后仍可一键重开。 */
+    cartSheet: null,
     /** 是否已记录过「首字到达」，仅用于控制台链路日志去重。 */
     firstDeltaLogged: false,
     error: '',
@@ -306,7 +311,9 @@ function applyEvent(message, name, payload) {
       showToast('已加入购物车')
       break
     case 'cart_select':
-      openCartSelection(data)
+      // 快照留在消息上：用户关掉弹层后还能从消息里重新打开，不必再问一遍 AI
+      message.cartSheet = data
+      openCartSelection(data, message.id)
       break
     case 'confirm_action':
       markOldProposalsSuperseded(message)
@@ -393,12 +400,14 @@ function markProductAdded(goodsId) {
  *
  * @param {object} data cart_select 载荷
  */
-function openCartSelection(data) {
+function openCartSelection(data, messageId) {
   const items = (Array.isArray(data.items) ? data.items : []).map((item) => ({
     ...item,
     checked: item.checked === true,
     // 记住初始勾选：提交时只需要同步改动过的行，少打一轮接口
-    initialChecked: item.checked === true
+    initialChecked: item.checked === true,
+    // 数量以服务端快照为准，改动后先调接口再更新本地，失败可回滚
+    savingNumber: false
   }))
   aiChatState.cartSelect = {
     visible: true,
@@ -406,7 +415,8 @@ function openCartSelection(data) {
     addressId: data.addressId || null,
     addressText: data.addressText || '',
     userCouponId: data.userCouponId || null,
-    items
+    items,
+    messageId: messageId || null
   }
   touch()
 }
@@ -586,9 +596,12 @@ export function sendMessage(text) {
       controller = null
       aiChatState.sending = false
     }
-    // 停止或异常导致没有任何内容时，给一个明确的收尾提示，避免出现空气泡
+    // 停止或异常导致没有任何内容时，给一个明确的收尾提示，避免出现空气泡。
+    // 有商品卡或提议也算「有结果」：模型只调工具、没输出文本是合法情况，
+    // 早前只看 content 会把「已展示商品/已加购」误判成空回复
     reply.steps = reply.steps.filter((step) => !step.pending)
-    if (!reply.content && !reply.error) {
+    const hasArtifact = Boolean(reply.products.length || reply.proposal || reply.error)
+    if (!reply.content && !hasArtifact) {
       reply.error = '本次没有返回内容，请重试'
     }
     traceLog('流结束')
@@ -738,6 +751,56 @@ export function closeCartSelection() {
 }
 
 /**
+ * 从消息里重新打开购物车弹层。
+ * <p>
+ * 之前的实现关掉就只能再跟 AI 说一次「下单」才会重新弹出，等于把选择权交给了模型。
+ * 快照留在消息上，用户点一下即可回到刚才的勾选界面。
+ *
+ * @param {object} message 触发过 cart_select 的助手消息
+ */
+export function reopenCartSelection(message) {
+  if (!message || !message.cartSheet) {
+    return
+  }
+  traceLog('重新打开购物车弹层', { messageId: message.id })
+  openCartSelection(message.cartSheet, message.id)
+}
+
+/**
+ * 在勾选弹层里修改数量。
+ * <p>
+ * 必须先落库再提交提议：服务端生成提议时读的是购物车行里的 number，
+ * 如果只改前端状态，用户会看到「弹层里 3 件、提议里 1 件」。
+ * 本地先乐观更新让 stepper 立即响应，失败再回滚并提示。
+ *
+ * @param {object} item   购物车行
+ * @param {number} number 目标数量
+ */
+export function changeCartItemNumber(item, number) {
+  if (!item || item.savingNumber) {
+    return
+  }
+  const target = Number(number)
+  const previous = item.number
+  if (!target || target === previous) {
+    return
+  }
+  item.number = target
+  item.savingNumber = true
+  touch()
+  traceLog('改数量', { cartId: item.cartId, number: target })
+  changeNumber(item.cartId, target)
+    .catch(() => {
+      item.number = previous
+      showToast('数量修改失败，请重试')
+    })
+    .finally(() => {
+      item.savingNumber = false
+      touch()
+    })
+}
+
+/**
  * 提交购物车勾选结果并生成待确认提议。
  *
  * 两个动作必须按顺序：先把勾选状态写回购物车（服务端只认 {@code checked=true} 的行），
@@ -793,6 +856,11 @@ export function submitCartSelection() {
  */
 function applyCreatedProposal(vo) {
   markOldProposalsSuperseded(null)
+  // 提议已生成，来源消息不再提供「重新选择商品」，避免对同一次下单反复弹层
+  const source = aiChatState.messages.find((item) => item.id === aiChatState.cartSelect.messageId)
+  if (source) {
+    source.cartSheet = null
+  }
   const reply = createMessage('assistant')
   reply.content = '已按你勾选的商品生成下单提议，确认后才会真正创建订单。'
   reply.proposal = {

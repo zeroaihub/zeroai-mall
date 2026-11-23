@@ -83,13 +83,15 @@ public class CartWriteSupport {
      * @param number 目标数量
      * @return 是否修改成功
      */
-    public Boolean changeNum(Long cartId, Integer number) {
-        if (cartId == null || number == null || number <= 0) {
+    public Boolean changeNum(Long cartId, Integer number, Long userId) {
+        if (cartId == null || number == null || number <= 0 || userId == null) {
             throw new BusinessException(ReturnCodeEnum.PARAMETER_TYPE_ERROR);
         }
 
         Cart cart = cartMapper.selectById(cartId);
-        if (cart == null) {
+        // 归属不符与「不存在」同一处理：既挡住越权改他人购物车，也不让对方探测哪些 ID 存在
+        if (cart == null || cart.getUserId() == null
+                || !cart.getUserId().equals(Math.toIntExact(userId))) {
             throw new BusinessException(ReturnCodeEnum.PARAMETER_TYPE_ERROR);
         }
         GoodsProduct product = cartValidationSupport.requireProduct(cart.getProductId(), cart.getGoodsId());

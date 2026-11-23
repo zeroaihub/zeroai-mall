@@ -102,7 +102,7 @@ public class CartController extends BaseController {
     public R<Boolean> changeNum(@PathVariable Long cartId, @PathVariable Integer number) {
         Long userId = MobileSecurityUtils.getUserId();
         log.info("更新购物车数量开始, userId={}, cartId={}, number={}", userId, cartId, number);
-        Boolean updated = iCartService.changeNum(cartId, number);
+        Boolean updated = iCartService.changeNum(cartId, number, userId);
         log.info("更新购物车数量完成, userId={}, cartId={}, result={}", userId, cartId, updated);
         return R.result(updated);
     }

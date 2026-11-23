@@ -67,7 +67,7 @@ public class ShowProductsTool {
     public String showProducts(String goodsIds) {
         // 入参用字符串而不是 List<Long>：SDK 的参数绑定对集合类型不稳定，
         // 模型常把它写成 "1181016,1030003" 或 "[1181016]"，这里统一解析，避免调用在绑定阶段就失败
-        List<Long> parsed = parseIds(goodsIds);
+        List<Long> parsed = IdListParser.parse(goodsIds);
         if (parsed.isEmpty()) {
             return "{\"error\":\"EMPTY_GOODS_IDS\",\"hint\":\"请把商品ID用逗号分隔传入，如 1181016,1030003\"}";
         }
@@ -155,34 +155,5 @@ public class ShowProductsTool {
         }
         sb.append(",\"hint\":").append(ToolJson.str(SHOWN_HINT));
         return sb.append('}').toString();
-    }
-
-    /**
-     * 解析模型传来的商品 ID 串。
-     * <p>
-     * 兼容三种写法：{@code 1181016,1030003}、{@code [1181016, 1030003]}、{@code 1181016 1030003}。
-     * 非数字片段直接忽略，由调用方在结果为空时给出格式提示。
-     *
-     * @param raw 原始入参，可为 null
-     * @return 解析出的 ID 列表，保持原顺序
-     */
-    static List<Long> parseIds(String raw) {
-        if (raw == null || raw.isBlank()) {
-            return List.of();
-        }
-        String normalized = raw.replaceAll("[\\[\\]\"']", ",");
-        List<Long> ids = new java.util.ArrayList<>();
-        for (String part : normalized.split("[,，、;；/\\s]+")) {
-            String token = part.trim();
-            if (token.isEmpty()) {
-                continue;
-            }
-            try {
-                ids.add(Long.parseLong(token));
-            } catch (NumberFormatException ignored) {
-                // 非数字片段（如误传商品名）忽略，交给空结果分支提示格式
-            }
-        }
-        return ids;
     }
 }

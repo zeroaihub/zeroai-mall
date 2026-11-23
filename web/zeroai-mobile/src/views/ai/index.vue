@@ -102,6 +102,13 @@
             </div>
           </div>
 
+          <!-- 弹层关掉后仍可重开：不必再跟 AI 说一次「下单」 -->
+          <div v-if="message.cartSheet && !message.proposal && !cartSelect.visible" class="ai-cart-reopen">
+            <van-button size="small" round plain type="primary" @click="handleReopenCart(message)">
+              重新选择下单商品
+            </van-button>
+          </div>
+
           <!-- 下单提议：Agent 只能生成提议，真正的写入口是这里的确认按钮 -->
           <div v-if="message.proposal" class="ai-proposal">
             <div class="ai-proposal__head">
@@ -215,7 +222,7 @@
         </div>
 
         <div class="ai-cart__list">
-          <label v-for="item in cartSelect.items" :key="item.cartId" class="ai-cart__row">
+          <div v-for="item in cartSelect.items" :key="item.cartId" class="ai-cart__row">
             <van-checkbox v-model="item.checked" shape="square" />
             <div class="ai-cart__thumb">
               <img v-if="item.picUrl" :src="item.picUrl" :alt="item.goodsName" />
@@ -223,9 +230,20 @@
             </div>
             <div class="ai-cart__info">
               <p class="ai-cart__name">{{ item.goodsName }}</p>
-              <p class="ai-cart__price">￥{{ item.unitPrice }} × {{ item.number }}</p>
+              <p class="ai-cart__price">￥{{ item.unitPrice }}</p>
             </div>
-          </label>
+            <!-- 数量直接在这里改：改动立即落购物车，生成提议时按这个数量计算 -->
+            <van-stepper
+              class="ai-cart__stepper"
+              :model-value="item.number"
+              :min="1"
+              :max="99"
+              integer
+              button-size="24px"
+              :disabled="item.savingNumber"
+              @change="(value) => handleChangeNumber(item, value)"
+            />
+          </div>
         </div>
 
         <div class="ai-cart__foot">
@@ -254,10 +272,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, toRefs, watch } fr
 import {
   addProductToCart,
   aiChatState,
+  changeCartItemNumber,
   clearSession,
   closeCartSelection,
   confirmProposal,
   ensureHistory,
+  reopenCartSelection,
   sendMessage,
   stopStream,
   submitCartSelection
@@ -373,6 +393,16 @@ const handleAddCart = (card) => {
 /** 提交购物车勾选，生成待确认提议。 */
 const handleSubmitCart = () => {
   submitCartSelection()
+}
+
+/** 弹层内改数量：立即落库，避免提议金额与弹层显示不一致。 */
+const handleChangeNumber = (item, value) => {
+  changeCartItemNumber(item, value)
+}
+
+/** 重新打开上次关掉的勾选弹层。 */
+const handleReopenCart = (message) => {
+  reopenCartSelection(message)
 }
 
 onMounted(() => {
@@ -772,6 +802,11 @@ onBeforeUnmount(() => {
   }
 }
 
+.ai-cart-reopen {
+  display: flex;
+  padding: 8px 0 0;
+}
+
 /* 购物车勾选弹层 */
 .ai-cart-popup {
   border-radius: 24px 24px 0 0;
@@ -816,7 +851,7 @@ onBeforeUnmount(() => {
   &__row {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 10px;
     padding: 14px;
     border-radius: var(--wb-radius-soft);
     background: var(--wb-surface-subtle);
@@ -824,8 +859,8 @@ onBeforeUnmount(() => {
 
   &__thumb {
     flex: none;
-    width: 80px;
-    height: 80px;
+    width: 72px;
+    height: 72px;
     border-radius: 12px;
     overflow: hidden;
     background: var(--wb-surface-elevated);
@@ -864,6 +899,16 @@ onBeforeUnmount(() => {
     margin: 8px 0 0;
     font-size: 22px;
     color: var(--wb-text-secondary);
+  }
+
+  /* 数量选择器：与勾选框、缩略图同一行，宽度固定，避免把商品名挤没 */
+  &__stepper {
+    flex: none;
+
+    :deep(.van-stepper__input) {
+      width: 56px;
+      font-size: 22px;
+    }
   }
 
   &__foot {

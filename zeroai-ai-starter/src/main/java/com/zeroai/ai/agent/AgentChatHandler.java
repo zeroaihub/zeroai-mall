@@ -145,6 +145,10 @@ public class AgentChatHandler {
             interruptQuietly(agentRef.get());
         });
 
+        // 本轮是否只产出了「界面产物」而没有任何文本：用于在收尾时补一句说明，
+        // 避免用户只看到卡片、气泡却是空的
+        AtomicReference<String> uiFallback = new AtomicReference<>();
+
         MallAgentContext context = new MallAgentContext(userId, sessionId);
         RuntimeContext runtimeContext = RuntimeContext.builder()
                 .userId(userId == null ? ANONYMOUS_PRINCIPAL : String.valueOf(userId))
@@ -156,7 +160,8 @@ public class AgentChatHandler {
                     // 商品卡 / 加购 / 购物车勾选 / 提议确认四类事件共用同一个 sink：
                     // 前端拿到事件后各自走独立接口，不需要再经过 Agent
                     long createStart = System.currentTimeMillis();
-                    HarnessAgent agent = agentFactory.create(context, new SseGuideEvents(sink, trace));
+                    HarnessAgent agent = agentFactory.create(context,
+                            new SseGuideEvents(sink, trace, uiFallback));
                     agentRef.set(agent);
                     log.info("Agent 实例就绪 userId={} sessionId={} costMs={} tools={}",
                             userId, sessionId, System.currentTimeMillis() - createStart, toolNames(agent));
@@ -174,7 +179,7 @@ public class AgentChatHandler {
         subscriptionRef.set(events.subscribe(
                 event -> onEvent(sink, event, steps, textSeen, truncated, turn, trace),
                 error -> onError(sink, error, userId, sessionId, steps, turn),
-                () -> onComplete(sink, steps, truncated, turn, trace)));
+                () -> onComplete(sink, steps, truncated, turn, trace, uiFallback)));
     }
 
     /**
@@ -232,9 +237,13 @@ public class AgentChatHandler {
         /** 本轮追踪上下文，只用于日志里的用户/会话关联。 */
         private final TurnTrace trace;
 
-        private SseGuideEvents(SseSink sink, TurnTrace trace) {
+        /** 本轮可视产物的兜底文案，供收尾时补白；只记第一条。 */
+        private final AtomicReference<String> uiFallback;
+
+        private SseGuideEvents(SseSink sink, TurnTrace trace, AtomicReference<String> uiFallback) {
             this.sink = sink;
             this.trace = trace;
+            this.uiFallback = uiFallback;
         }
 
         @Override
@@ -258,6 +267,7 @@ public class AgentChatHandler {
             log.info("下发商品卡 userId={} sessionId={} keyword=\"{}\" count={} goodsIds={}",
                     trace.userId(), trace.sessionId(), cards.keyword(), items.size(),
                     items.stream().map(item -> item.get("goodsId")).toList());
+            uiFallback.compareAndSet(null, "已按你的条件挑出这几件，点「加入购物车」即可。");
             send(AiEvent.of(AiEventType.PRODUCT_CARDS, payload));
         }
 
@@ -276,6 +286,7 @@ public class AgentChatHandler {
             log.info("下发加购成功 userId={} sessionId={} cartId={} goodsId={} goodsName=\"{}\" number={}",
                     trace.userId(), trace.sessionId(), added.cartId(), added.goodsId(),
                     added.goodsName(), added.number());
+            uiFallback.compareAndSet(null, "已加入购物车。");
             send(AiEvent.of(AiEventType.CART_ADDED, payload));
         }
 
@@ -310,6 +321,7 @@ public class AgentChatHandler {
                     trace.userId(), trace.sessionId(), selection.addressId(), items.size(),
                     selection.totalNumber(),
                     items.stream().filter(row -> Boolean.TRUE.equals(row.get("checked"))).count());
+            uiFallback.compareAndSet(null, "请在下方确认商品和数量，点「生成下单提议」后才会创建订单。");
             send(AiEvent.of(AiEventType.CART_SELECT, payload));
         }
 
@@ -494,7 +506,19 @@ public class AgentChatHandler {
      * @param trace     本轮追踪上下文
      */
     private void onComplete(SseSink sink, AtomicInteger steps, AtomicBoolean truncated,
-                            AiChatHistory.Turn turn, TurnTrace trace) {
+                            AiChatHistory.Turn turn, TurnTrace trace,
+                            AtomicReference<String> uiFallback) {
+        // 模型只调工具、一句话没说时，正文会是空的：补一句与产物对应的说明。
+        // 不补的话前端只能显示一个空气泡，用户以为回答丢了
+        String fallback = uiFallback.get();
+        if (trace.textChars().get() == 0 && fallback != null) {
+            if (turn != null) {
+                turn.delta(fallback);
+            }
+            trace.textChars().addAndGet(fallback.length());
+            sink.send(AiEvent.of(AiEventType.MESSAGE_DELTA, Map.of("delta", fallback)));
+            log.info("补齐空回答文案 userId={} sessionId={} text={}", trace.userId(), trace.sessionId(), fallback);
+        }
         if (turn != null) {
             turn.success(steps.get());
         }

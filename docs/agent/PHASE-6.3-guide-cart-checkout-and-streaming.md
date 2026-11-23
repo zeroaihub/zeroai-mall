@@ -46,15 +46,21 @@ Phase 6 把「生成提议」和「确认下单」拆成了两个入口，安全
 ### 3.2 勾选商品在对话内完成
 
 ```text
-用户说「下单」
-  → propose_order(addressId, cartIds=[])        # 不传 cartIds
-  → ActionProposalService.prepareCartSelection  # 只读：默认地址 + 整份购物车
-  → SSE cart_select                             # 前端弹层
-  → 用户勾选 + 点「生成下单提议」
-  → PUT /cart（只同步改动过的勾选行）
+用户说「把小米手机下单」
+  → list_my_cart                                # 模型先查购物车，挑出对应行
+  → propose_order(addressId, cartIds="25")      # 只传要买的那几行
+  → ActionProposalService.prepareCartSelection  # 只读：默认地址 + 这些行（不再倒出整份购物车）
+  → SSE cart_select                             # 前端弹层，可改数量
+  → 用户确认（可改数量，逐个 POST /cart/changeNum/{id}/{num} 落库）
   → POST /ai/action/proposal {cartIds}
   → confirm_action 卡片                          # 仍需点「确认下单」
 ```
+
+弹层关掉不算放弃：`cart_select` 的载荷留在消息上，消息内提供「重新选择下单商品」按钮，
+点一下即恢复上次的勾选界面，不需要再跟模型说一遍「下单」。
+
+数量修改走 `/cart/changeNum/{cartId}/{number}`，该接口已补 userId 归属校验：
+非本人购物车返回参数错误，且不区分「不存在」与「别人的」，避免被用来探测购物车 ID。
 
 关键不变量**没有变**：服务端仍然只认 `checked=true` 的购物车行
 （`ActionProposalService.resolveCarts` 是唯一拦截点）。弹层只是把「在哪里勾选」搬进对话，

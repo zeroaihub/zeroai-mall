@@ -123,11 +123,11 @@ class ShowProductsToolTest {
     @Test
     void shouldParseIdsFromModelFormats() {
         // SDK 传字符串时，模型可能写成逗号分隔、带方括号、或空格分隔
-        assertEquals(List.of(1181016L, 1030003L), ShowProductsTool.parseIds("1181016,1030003"));
-        assertEquals(List.of(1181016L), ShowProductsTool.parseIds("[1181016]"));
-        assertEquals(List.of(1181016L, 1030003L), ShowProductsTool.parseIds("1181016 1030003"));
-        assertEquals(List.of(), ShowProductsTool.parseIds("小米手机"), "非数字片段应忽略");
-        assertEquals(List.of(), ShowProductsTool.parseIds(""));
+        assertEquals(List.of(1181016L, 1030003L), IdListParser.parse("1181016,1030003"));
+        assertEquals(List.of(1181016L), IdListParser.parse("[1181016]"));
+        assertEquals(List.of(1181016L, 1030003L), IdListParser.parse("1181016 1030003"));
+        assertEquals(List.of(), IdListParser.parse("小米手机"), "非数字片段应忽略");
+        assertEquals(List.of(), IdListParser.parse(""));
     }
 
     @Test

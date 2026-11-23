@@ -625,7 +625,7 @@ class ActionProposalServiceTest {
                 .thenReturn(List.of(address));
         givenCart(10L, 30L, new BigDecimal("20.00"), 2);
 
-        CartSelection selection = service.prepareCartSelection(USER_ID, null, null);
+        CartSelection selection = service.prepareCartSelection(USER_ID, null, null, null);
 
         assertNotNull(selection);
         assertEquals(7L, selection.addressId(), "未指定地址时必须解析出默认地址");
@@ -643,7 +643,7 @@ class ActionProposalServiceTest {
                 org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<Address>>any()))
                 .thenReturn(List.of());
 
-        assertThrows(BusinessException.class, () -> service.prepareCartSelection(USER_ID, null, null));
+        assertThrows(BusinessException.class, () -> service.prepareCartSelection(USER_ID, null, null, null));
     }
 
     @Test
@@ -659,7 +659,49 @@ class ActionProposalServiceTest {
                 org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<Cart>>any()))
                 .thenReturn(List.of());
 
-        assertNull(service.prepareCartSelection(USER_ID, null, null));
+        assertNull(service.prepareCartSelection(USER_ID, null, null, null));
+    }
+
+    @Test
+    @DisplayName("传了 cartIds 时弹层只含这些商品，并按传入顺序排列")
+    void prepareSelectionScopesToRequestedCartIds() {
+        Address address = new Address();
+        address.setId(7L);
+        address.setMemberId(USER_ID);
+        address.setName("张三");
+        address.setTel("13800138000");
+        when(addressService.list(
+                org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<Address>>any()))
+                .thenReturn(List.of(address));
+        // 购物车里有两行，用户只说要下第二行：弹层不该把两行都倒出来
+        Cart phone = new Cart();
+        phone.setId(11L);
+        phone.setGoodsId(20L);
+        phone.setProductId(30L);
+        phone.setPrice(new BigDecimal("2999.00"));
+        phone.setNumber(1);
+        phone.setGoodsName("小米手机");
+        phone.setChecked(false);
+        phone.setUserId(USER_ID.intValue());
+        Cart other = new Cart();
+        other.setId(10L);
+        other.setGoodsId(21L);
+        other.setProductId(31L);
+        other.setPrice(new BigDecimal("19.90"));
+        other.setNumber(3);
+        other.setGoodsName("数据线");
+        other.setChecked(true);
+        other.setUserId(USER_ID.intValue());
+        when(cartService.list(
+                org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<Cart>>any()))
+                .thenReturn(List.of(phone, other));
+
+        CartSelection selection = service.prepareCartSelection(USER_ID, null, null, List.of(11L));
+
+        assertEquals(1, selection.items().size(), "只应展示用户要下单的那一件");
+        assertEquals(11L, selection.items().get(0).cartId());
+        assertEquals("小米手机", selection.items().get(0).goodsName());
+        assertEquals(1, selection.totalNumber());
     }
 
     // ---------- 提议唯一 ----------
