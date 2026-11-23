@@ -57,7 +57,7 @@ public class ActionProposalController {
      * <p>
      * 本接口<b>不创建订单</b>：只落一条待确认提议，确认仍走 {@code /confirm/{proposalNo}}。
      *
-     * @param reqVO 勾选结果与可选地址、优惠券
+     * @param reqVO 勾选结果与收货地址（必填）、可选优惠券
      * @return 提议视图
      */
     @PostMapping("proposal")
@@ -69,6 +69,12 @@ public class ActionProposalController {
                 reqVO == null ? null : reqVO.userCouponId(), cartIds.size());
         if (cartIds.isEmpty()) {
             return R.error(400, "请先勾选要下单的商品");
+        }
+        // 地址必须由用户在弹层里选过：空值直接拒绝，不退回默认地址，
+        // 否则「确认地址」这一步在服务端等于不存在
+        if (reqVO.addressId() == null) {
+            log.info("按勾选生成下单提议缺少地址, userId={}", userId);
+            return R.error(400, "请先选择收货地址");
         }
         try {
             ProposalVO vo = proposalService.createProposalForSelection(

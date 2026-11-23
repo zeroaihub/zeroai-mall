@@ -21,7 +21,7 @@ Phase 6 把「生成提议」和「确认下单」拆成了两个入口，安全
 - 新增 `POST /ai/action/proposal`：按勾选结果生成提议。
 - 提议状态机新增 `SUPERSEDED`（被新提议替代）。
 - 前端：商品卡加购、购物车勾选弹层、思考过程与打字机渲染。
-- 非目标：支付、退款、优惠券选择、地址切换（仍走默认地址与既有页面）。
+- 非目标：支付、退款、优惠券选择。
 
 ## 3. 核心逻辑调整
 
@@ -49,15 +49,27 @@ Phase 6 把「生成提议」和「确认下单」拆成了两个入口，安全
 用户说「把小米手机下单」
   → list_my_cart                                # 模型先查购物车，挑出对应行
   → propose_order(addressId, cartIds="25")      # 只传要买的那几行
-  → ActionProposalService.prepareCartSelection  # 只读：默认地址 + 这些行（不再倒出整份购物车）
-  → SSE cart_select                             # 前端弹层，可改数量
+  → ActionProposalService.prepareCartSelection  # 只读：默认地址（没有则留空）+ 这些行
+  → SSE cart_select                             # 前端弹层：地址可换、数量可改
+  → 用户在弹层里确认收货地址（GET /address/list 单选，或跳 /address/edit 新增）
   → 用户确认（可改数量，逐个 POST /cart/changeNum/{id}/{num} 落库）
-  → POST /ai/action/proposal {cartIds}
-  → confirm_action 卡片                          # 仍需点「确认下单」
+  → POST /ai/action/proposal {addressId, cartIds}
+  → 提议卡片（显示「寄送至 …」）                  # 仍需点「确认下单」
 ```
+
+**地址必须由用户确认。** 默认地址只是弹层里的初值，`POST /ai/action/proposal` 的 `addressId`
+为空直接拒绝（不退回默认地址），前端在提交前也会拦截并弹出地址选择层：
+否则用户会在不知道寄到哪的情况下拿到一张可确认的提议，等于盲签。
+
+提议卡片同时下发 `addressText`（收件人 + 脱敏手机号 + 省市区门牌）：点「确认下单」前能看到寄送地址。
+地址选错不必重新跟模型说一遍——卡片上的「修改地址/商品」用消息里的快照重开弹层，
+改完生成新提议，旧提议由服务端置为 `SUPERSEDED`。
 
 弹层关掉不算放弃：`cart_select` 的载荷留在消息上，消息内提供「重新选择下单商品」按钮，
 点一下即恢复上次的勾选界面，不需要再跟模型说一遍「下单」。
+
+用户一条地址都没有时也照常弹层（`prepareCartSelection` 允许地址为空），
+弹层里显示「请选择收货地址」+「新增收货地址」；提交前仍必须选一个。
 
 数量修改走 `/cart/changeNum/{cartId}/{number}`，该接口已补 userId 归属校验：
 非本人购物车返回参数错误，且不区分「不存在」与「别人的」，避免被用来探测购物车 ID。

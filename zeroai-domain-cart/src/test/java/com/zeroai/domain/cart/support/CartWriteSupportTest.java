@@ -17,6 +17,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -116,5 +117,34 @@ class CartWriteSupportTest {
 
         verify(cartMapper).update(any(), any());
         verify(tradeLockSupport).executeWithLock(contains("9"), eq(2), any(), any());
+    }
+
+    @Test
+    void updateCheckedIsIdempotentWhenValueUnchanged() {
+        // MySQL 在「值没变」时受影响行数是 0，不能因此报「操作失败」：
+        // 用户重复点同一个勾选状态是合法操作，报错会让人以为没生效
+        when(cartMapper.update(any(), any())).thenReturn(0);
+        Cart existing = new Cart();
+        existing.setId(1L);
+        existing.setUserId(9);
+        when(cartMapper.selectById(1L)).thenReturn(existing);
+        when(tradeLockSupport.executeWithLock(anyString(), eq(2), any(), any()))
+                .thenAnswer(invocation -> invocation.<java.util.function.Supplier<Boolean>>getArgument(3).get());
+
+        assertTrue(cartWriteSupport.updateChecked(1L, true, 9L));
+    }
+
+    @Test
+    void updateCheckedReturnsFalseWhenCartBelongsToOthers() {
+        when(cartMapper.update(any(), any())).thenReturn(0);
+        Cart existing = new Cart();
+        existing.setId(1L);
+        // 别人的购物车：即便受影响行数为 0 也不能当成功
+        existing.setUserId(8);
+        when(cartMapper.selectById(1L)).thenReturn(existing);
+        when(tradeLockSupport.executeWithLock(anyString(), eq(2), any(), any()))
+                .thenAnswer(invocation -> invocation.<java.util.function.Supplier<Boolean>>getArgument(3).get());
+
+        assertFalse(cartWriteSupport.updateChecked(1L, true, 9L));
     }
 }

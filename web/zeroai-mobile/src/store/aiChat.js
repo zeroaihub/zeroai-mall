@@ -11,6 +11,7 @@ import {
   streamAgentChat
 } from '@/api/ai'
 import { addDefaultGoodsProduct, changeNumber, updateCart } from '@/api/cart'
+import { getAddress } from '@/api/address'
 import { getToken } from '@/utils/auth'
 import router from '@/router'
 
@@ -88,7 +89,16 @@ export const aiChatState = reactive({
     userCouponId: null,
     items: [],
     /** 触发弹层的那条消息；关闭后靠它把「重新选择商品」按钮挂回原消息。 */
-    messageId: null
+    messageId: null,
+    /**
+     * 收货地址候选。
+     * 地址是下单的一部分：用户必须在提交前看清并确认寄到哪，
+     * 所以弹层里要能切换，而不是只显示服务端给的默认地址。
+     */
+    addresses: [],
+    addressesLoading: false,
+    /** 地址选择层显隐（叠在勾选弹层之上）。 */
+    addressPickerVisible: false
   }
 })
 
@@ -416,9 +426,14 @@ function openCartSelection(data, messageId) {
     addressText: data.addressText || '',
     userCouponId: data.userCouponId || null,
     items,
-    messageId: messageId || null
+    messageId: messageId || null,
+    addresses: [],
+    addressesLoading: false,
+    addressPickerVisible: false
   }
   touch()
+  // 地址列表单独拉一次：事件里只带服务端解析出的默认地址，用户需要能换成别的
+  loadCartAddresses()
 }
 
 /**
@@ -434,6 +449,7 @@ function mapProposalEvent(data) {
     actualPrice: data.actualPrice,
     itemCount: data.itemCount,
     expireAt: data.expireAt,
+    addressText: data.addressText || '',
     message: data.message,
     orderSn: '',
     error: '',
@@ -767,6 +783,122 @@ export function reopenCartSelection(message) {
 }
 
 /**
+ * 地址摘要：收件人 + 脱敏手机号 + 省市区门牌。
+ * <p>
+ * 与服务端 {@code addressText} 保持同一口径（手机号中间四位打码）：
+ * 前端自己拼出来的文案如果和服务端不一致，用户切换地址后会看到两种格式。
+ *
+ * @param {object} address 地址对象（AddressResVO）
+ * @returns {string} 单行摘要
+ */
+function formatAddressText(address) {
+  if (!address) {
+    return ''
+  }
+  const tel = String(address.tel || '')
+  const maskedTel = tel.length === 11 ? `${tel.slice(0, 3)}****${tel.slice(7)}` : tel
+  const region = [address.province, address.city, address.county].filter(Boolean).join('')
+  return [address.name, maskedTel, region, address.addressDetail]
+    .filter((part) => part && String(part).trim())
+    .join(' ')
+}
+
+/**
+ * 拉取当前用户的收货地址，供弹层内切换。
+ * <p>
+ * 弹层里只显示服务端解析出的「默认地址」是不够的：用户可能要给家人寄、要改寄公司，
+ * 地址必须在下单前可改。这里带自愈：原地址被删掉时自动退到默认地址，
+ * 而不是让用户停在「寄送到空」上直到提交才报错。
+ *
+ * @returns {Promise<void>} 不抛错：失败时保留服务端下发的摘要，用户仍可提交
+ */
+export function loadCartAddresses() {
+  const sheet = aiChatState.cartSelect
+  if (!sheet.visible || sheet.addressesLoading) {
+    return Promise.resolve()
+  }
+  sheet.addressesLoading = true
+  touch()
+  return getAddress()
+    .then((res) => {
+      const list = Array.isArray(res && res.data) ? res.data : []
+      sheet.addresses = list
+      const current = list.find((item) => item.id === sheet.addressId)
+      if (current) {
+        // 地址可能在地址页被编辑过，摘要以最新一次查询为准
+        sheet.addressText = formatAddressText(current)
+        return
+      }
+      const preferred = list.find((item) => item.isDefault) || list[0]
+      if (preferred) {
+        sheet.addressId = preferred.id
+        sheet.addressText = formatAddressText(preferred)
+      } else {
+        sheet.addressId = null
+        sheet.addressText = ''
+      }
+    })
+    .catch(() => {
+      // 拦截器已提示；保留服务端下发的地址摘要，不阻断下单
+    })
+    .finally(() => {
+      sheet.addressesLoading = false
+      touch()
+    })
+}
+
+/** 打开地址选择层。每次打开都重新拉取，用户可能刚在地址页新增过。 */
+export function openCartAddressPicker() {
+  const sheet = aiChatState.cartSelect
+  if (!sheet.visible) {
+    return
+  }
+  sheet.addressPickerVisible = true
+  touch()
+  loadCartAddresses()
+}
+
+/** 关闭地址选择层（不影响已选地址）。 */
+export function closeCartAddressPicker() {
+  const sheet = aiChatState.cartSelect
+  if (!sheet.addressPickerVisible) {
+    return
+  }
+  sheet.addressPickerVisible = false
+  touch()
+}
+
+/**
+ * 选中某个收货地址。
+ *
+ * @param {object} address 地址对象
+ */
+export function selectCartAddress(address) {
+  const sheet = aiChatState.cartSelect
+  if (!address || !address.id) {
+    return
+  }
+  sheet.addressId = address.id
+  sheet.addressText = formatAddressText(address)
+  sheet.addressPickerVisible = false
+  touch()
+  traceLog('选择收货地址', { addressId: address.id })
+}
+
+/**
+ * 去新增收货地址。
+ * <p>
+ * 弹层状态留在模块单例里，从地址页返回后仍是原来那批商品与勾选，
+ * 不需要让用户重新对 AI 说一遍「下单」。
+ */
+export function goAddCartAddress() {
+  const sheet = aiChatState.cartSelect
+  sheet.addressPickerVisible = false
+  touch()
+  router.push({ path: '/address/edit' })
+}
+
+/**
  * 在勾选弹层里修改数量。
  * <p>
  * 必须先落库再提交提议：服务端生成提议时读的是购物车行里的 number，
@@ -816,6 +948,13 @@ export function submitCartSelection() {
     showToast('请先勾选要下单的商品')
     return
   }
+  // 地址是下单的必要条件：没确认过地址就不生成提议，
+  // 否则用户会在「不知道寄到哪」的情况下拿到一张可直接确认的提议
+  if (!sheet.addressId) {
+    showToast('请先选择收货地址')
+    openCartAddressPicker()
+    return
+  }
   traceLog('提交勾选', { cartCount: selected.length, addressId: sheet.addressId })
   sheet.submitting = true
   touch()
@@ -856,8 +995,9 @@ export function submitCartSelection() {
  */
 function applyCreatedProposal(vo) {
   markOldProposalsSuperseded(null)
+  const sheet = aiChatState.cartSelect
   // 提议已生成，来源消息不再提供「重新选择商品」，避免对同一次下单反复弹层
-  const source = aiChatState.messages.find((item) => item.id === aiChatState.cartSelect.messageId)
+  const source = aiChatState.messages.find((item) => item.id === sheet.messageId)
   if (source) {
     source.cartSheet = null
   }
@@ -868,15 +1008,41 @@ function applyCreatedProposal(vo) {
     actualPrice: vo.actualPrice,
     itemCount: Array.isArray(vo.items) ? vo.items.length : 0,
     expireAt: vo.expireAt,
+    // 地址随提议一起落到卡片上：用户点「确认下单」前必须能核对寄到哪
+    addressText: vo.addressText || '',
     message: vo.message,
     orderSn: '',
     error: '',
     state: 'pending'
   }
+  /*
+   * 快照挂到提议消息上，配合卡片里的「修改地址/商品」：
+   * 提议地址选错时用户不必重新对 AI 说一遍「下单」，
+   * 重开弹层改完会生成新提议，旧提议由服务端置为 SUPERSEDED。
+   */
+  reply.cartSheet = {
+    addressId: sheet.addressId,
+    addressText: sheet.addressText,
+    userCouponId: sheet.userCouponId,
+    items: sheet.items.map((item) => ({
+      cartId: item.cartId,
+      goodsId: item.goodsId,
+      productId: item.productId,
+      goodsName: item.goodsName,
+      unitPrice: item.unitPrice,
+      number: item.number,
+      checked: item.checked,
+      picUrl: item.picUrl
+    }))
+  }
   aiChatState.messages.push(reply)
   aiChatState.cartSelect.visible = false
   touch()
-  traceLog('提议已生成', { proposalNo: vo.proposalNo, actualPrice: vo.actualPrice })
+  traceLog('提议已生成', {
+    proposalNo: vo.proposalNo,
+    actualPrice: vo.actualPrice,
+    addressId: sheet.addressId
+  })
   showToast('下单提议已生成')
 }
 

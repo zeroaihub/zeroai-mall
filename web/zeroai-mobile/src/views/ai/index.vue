@@ -118,6 +118,18 @@
             <p class="ai-proposal__desc">
               {{ message.proposal.message || '需要你确认后才会创建订单' }}
             </p>
+            <!-- 寄送地址是确认决策的一部分：不显示地址等于让用户盲签 -->
+            <p
+              v-if="message.proposal.addressText"
+              class="ai-proposal__addr"
+            >
+              <van-icon name="location-o" />
+              <span>寄送至 {{ message.proposal.addressText }}</span>
+            </p>
+            <p v-else-if="message.proposal.state === 'pending'" class="ai-proposal__addr is-warn">
+              <van-icon name="warning-o" />
+              <span>收货地址已失效，请点「修改地址」重新选择</span>
+            </p>
             <div class="ai-proposal__meta">
               <span>{{ message.proposal.itemCount }} 件商品</span>
               <span v-if="message.proposal.expireAt">
@@ -133,6 +145,16 @@
                 round
                 @click="handleConfirm(message)"
                 >确认下单</van-button
+              >
+              <!-- 地址选错不用重说一遍：重开弹层改完会生成新提议，旧的自动作废 -->
+              <van-button
+                v-if="message.proposal.state === 'pending' && message.cartSheet"
+                class="ai-proposal__btn"
+                size="small"
+                round
+                plain
+                @click="handleReopenCart(message)"
+                >修改地址/商品</van-button
               >
               <van-button
                 v-else-if="message.proposal.state === 'confirming'"
@@ -215,10 +237,14 @@
       <div class="ai-cart">
         <div class="ai-cart__head">
           <h3 class="ai-cart__title">选择要下单的商品</h3>
-          <p class="ai-cart__addr">
+          <!-- 地址必须让用户确认：默认地址只是初值，寄到哪由用户说了算 -->
+          <button class="ai-cart__addr" type="button" @click="handlePickAddress">
             <van-icon name="location-o" />
-            {{ cartSelect.addressText || '还没有收货地址' }}
-          </p>
+            <span class="ai-cart__addr-text">{{
+              cartSelect.addressText || '请选择收货地址'
+            }}</span>
+            <van-icon name="arrow" class="ai-cart__addr-more" />
+          </button>
         </div>
 
         <div class="ai-cart__list">
@@ -263,6 +289,57 @@
         </div>
       </div>
     </van-popup>
+
+    <!-- 收货地址选择：叠在勾选弹层之上，选完立即回到商品列表 -->
+    <van-popup
+      v-model:show="addressPickerVisible"
+      position="bottom"
+      round
+      closeable
+      class="ai-addr-popup"
+      :style="{ maxHeight: '70vh' }"
+    >
+      <div class="ai-addr">
+        <h3 class="ai-addr__title">选择收货地址</h3>
+
+        <div class="ai-addr__list">
+          <div
+            v-for="address in cartSelect.addresses"
+            :key="address.id"
+            class="ai-addr__row"
+            :class="{ 'is-active': address.id === cartSelect.addressId }"
+            @click="handleSelectAddress(address)"
+          >
+            <div class="ai-addr__info">
+              <p class="ai-addr__who">
+                <span class="ai-addr__name">{{ address.name }}</span>
+                <span class="ai-addr__tel">{{ maskTel(address.tel) }}</span>
+                <van-tag v-if="address.isDefault" type="primary" plain>默认</van-tag>
+              </p>
+              <p class="ai-addr__where">{{ addressLine(address) }}</p>
+            </div>
+            <van-icon
+              v-if="address.id === cartSelect.addressId"
+              name="success"
+              class="ai-addr__check"
+            />
+          </div>
+        </div>
+
+        <div v-if="cartSelect.addressesLoading" class="ai-addr__loading">
+          <van-loading size="18px">正在加载地址</van-loading>
+        </div>
+        <van-empty
+          v-else-if="!cartSelect.addresses.length"
+          description="还没有收货地址，先添加一个才能下单"
+          image-size="72"
+        />
+
+        <van-button class="ai-addr__add" block round plain type="primary" @click="handleAddAddress">
+          新增收货地址
+        </van-button>
+      </div>
+    </van-popup>
   </div>
 </template>
 
@@ -274,10 +351,15 @@ import {
   aiChatState,
   changeCartItemNumber,
   clearSession,
+  closeCartAddressPicker,
   closeCartSelection,
   confirmProposal,
   ensureHistory,
+  goAddCartAddress,
+  loadCartAddresses,
+  openCartAddressPicker,
   reopenCartSelection,
+  selectCartAddress,
   sendMessage,
   stopStream,
   submitCartSelection
@@ -308,6 +390,16 @@ const cartVisible = computed({
   set: (value) => {
     if (!value) {
       closeCartSelection()
+    }
+  }
+})
+
+/** 地址选择层显隐：同样收口到 store，避免两处各存一份状态。 */
+const addressPickerVisible = computed({
+  get: () => aiChatState.cartSelect.addressPickerVisible,
+  set: (value) => {
+    if (!value) {
+      closeCartAddressPicker()
     }
   }
 })
@@ -405,8 +497,40 @@ const handleReopenCart = (message) => {
   reopenCartSelection(message)
 }
 
+/** 打开收货地址选择层。 */
+const handlePickAddress = () => {
+  openCartAddressPicker()
+}
+
+/** 选中地址：立即回填到弹层，提交时随提议一起带给服务端。 */
+const handleSelectAddress = (address) => {
+  selectCartAddress(address)
+}
+
+/** 去新增地址；返回后勾选弹层仍在，地址列表会自动重新拉取。 */
+const handleAddAddress = () => {
+  goAddCartAddress()
+}
+
+/** 手机号脱敏，与服务端摘要口径一致。 */
+const maskTel = (tel) => {
+  const text = String(tel || '')
+  return text.length === 11 ? `${text.slice(0, 3)}****${text.slice(7)}` : text
+}
+
+/** 地址单行展示：省市区 + 门牌。 */
+const addressLine = (address) => {
+  if (!address) {
+    return ''
+  }
+  const region = [address.province, address.city, address.county].filter(Boolean).join('')
+  return `${region} ${address.addressDetail || ''}`.trim()
+}
+
 onMounted(() => {
   ensureHistory()
+  // 从地址页返回时回到这里：弹层可能还开着，重新拉一次地址才能看到刚新增的那条
+  loadCartAddresses()
   scrollToBottom()
 })
 
@@ -531,6 +655,21 @@ onBeforeUnmount(() => {
     color: var(--wb-text-secondary);
   }
 
+  /* 寄送地址：确认前必须可见，否则用户是在不知道寄到哪的情况下点确认 */
+  &__addr {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 12px 0 0;
+    font-size: 22px;
+    line-height: 1.45;
+    color: var(--wb-text-secondary);
+
+    &.is-warn {
+      color: #ff9500;
+    }
+  }
+
   &__meta {
     display: flex;
     flex-wrap: wrap;
@@ -543,6 +682,7 @@ onBeforeUnmount(() => {
   &__actions {
     margin-top: 20px;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 16px;
   }
@@ -829,14 +969,36 @@ onBeforeUnmount(() => {
     color: var(--wb-text);
   }
 
+  /* 地址行是按钮：默认地址只是初值，点它才能换 */
   &__addr {
     margin: 10px 0 0;
+    padding: 10px 12px;
+    width: 100%;
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 8px;
+    border: 1px solid var(--wb-border);
+    border-radius: var(--wb-radius-soft);
+    background: var(--wb-surface-subtle);
+    font-family: inherit;
     font-size: 22px;
     line-height: 1.4;
     color: var(--wb-text-secondary);
+    text-align: left;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  &__addr-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__addr-more {
+    flex: none;
+    color: var(--wb-text-tertiary);
   }
 
   &__list {
@@ -983,6 +1145,92 @@ onBeforeUnmount(() => {
       border-color: var(--wb-surface-dark);
       color: #fff;
     }
+  }
+}
+
+/* 收货地址选择层：与勾选弹层同一套视觉，避免像两个不同页面 */
+.ai-addr {
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+  padding: 32px 24px calc(24px + env(safe-area-inset-bottom));
+  padding-right: 48px;
+
+  &__title {
+    margin: 0;
+    font-size: 30px;
+    font-weight: 600;
+    color: var(--wb-text);
+  }
+
+  &__list {
+    flex: 1;
+    margin-top: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 18px 20px;
+    border-radius: var(--wb-radius-soft);
+    background: var(--wb-surface-subtle);
+    border: 1px solid transparent;
+
+    &.is-active {
+      border-color: rgba(0, 113, 227, 0.45);
+      background: rgba(0, 113, 227, 0.06);
+    }
+  }
+
+  &__info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__who {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 0;
+    font-size: 24px;
+    color: var(--wb-text);
+  }
+
+  &__name {
+    font-weight: 600;
+  }
+
+  &__tel {
+    color: var(--wb-text-secondary);
+  }
+
+  &__where {
+    margin: 8px 0 0;
+    font-size: 22px;
+    line-height: 1.45;
+    color: var(--wb-text-secondary);
+  }
+
+  &__check {
+    flex: none;
+    color: #0071e3;
+    font-size: 32px;
+  }
+
+  &__loading {
+    padding: 28px 0;
+    display: flex;
+    justify-content: center;
+  }
+
+  &__add {
+    margin-top: 20px;
   }
 }
 </style>

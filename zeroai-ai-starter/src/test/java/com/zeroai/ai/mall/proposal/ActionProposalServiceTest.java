@@ -49,6 +49,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -123,6 +124,32 @@ class ActionProposalServiceTest {
         // 商品 40 + 运费 10（不满 100）
         assertEquals(new BigDecimal("50.00"), vo.actualPrice().setScale(2));
         verify(mobileOrderService, never()).asyncSubmit(any(), anyLong());
+    }
+
+    @Test
+    @DisplayName("提议视图带收货地址摘要，用户点确认前能看到寄到哪")
+    void proposalViewCarriesAddressSummary() {
+        Address address = new Address();
+        address.setId(1L);
+        address.setMemberId(USER_ID);
+        address.setName("张三");
+        address.setTel("13800138000");
+        address.setProvince("浙江省");
+        address.setCity("杭州市");
+        address.setCounty("西湖区");
+        address.setAddressDetail("文三路 1 号");
+        when(addressService.getById(1L)).thenReturn(address);
+        givenCart(10L, 30L, new BigDecimal("20.00"), 2);
+        when(proposalMapper.selectByIdempotencyKey(eq(USER_ID), anyString())).thenReturn(null);
+        when(proposalMapper.insert(org.mockito.ArgumentMatchers.<AiActionProposal>any())).thenReturn(1);
+
+        ProposalVO vo = service.createOrderProposal(USER_ID, 1L, null, List.of(10L));
+
+        // 只有金额和件数的提议等于让用户盲签：地址必须随视图下发
+        assertNotNull(vo.addressText(), "提议必须带收货地址摘要");
+        assertTrue(vo.addressText().contains("张三"), vo.addressText());
+        assertTrue(vo.addressText().contains("文三路 1 号"), vo.addressText());
+        assertFalse(vo.addressText().contains("13800138000"), "不得下发完整手机号：" + vo.addressText());
     }
 
     @Test
@@ -637,13 +664,35 @@ class ActionProposalServiceTest {
     }
 
     @Test
-    @DisplayName("没有任何收货地址时准备下单直接失败，不弹空壳弹层")
-    void prepareSelectionRequiresAddress() {
+    @DisplayName("没有收货地址时仍弹层，由用户在弹层里选或新增，提交前必须选")
+    void prepareSelectionToleratesMissingAddress() {
         when(addressService.list(
                 org.mockito.ArgumentMatchers.<com.baomidou.mybatisplus.core.conditions.Wrapper<Address>>any()))
                 .thenReturn(List.of());
+        givenCart(10L, 30L, new BigDecimal("20.00"), 2);
 
-        assertThrows(BusinessException.class, () -> service.prepareCartSelection(USER_ID, null, null, null));
+        CartSelection selection = service.prepareCartSelection(USER_ID, null, null, null);
+
+        // 早期实现直接抛错，用户体验是「说要下单 → 被告知没地址」，然后无路可走；
+        // 现在弹层照常出现，地址留空由弹层引导补齐
+        assertNotNull(selection);
+        assertNull(selection.addressId(), "没有地址时不得凭空给一个");
+        assertEquals("", selection.addressText());
+        assertEquals(1, selection.items().size());
+    }
+
+    @Test
+    @DisplayName("按勾选生成提议时必须带地址，不能悄悄退回默认地址")
+    void createProposalForSelectionRequiresExplicitAddress() {
+        givenAddressOwned();
+        givenCart(10L, 30L, new BigDecimal("20.00"), 2);
+
+        BusinessException error = assertThrows(BusinessException.class,
+                () -> service.createProposalForSelection(USER_ID, null, null, List.of(10L)));
+
+        assertTrue(error.getMsg().contains("收货地址"), error.getMsg());
+        // 没有生成任何提议：地址未确认就不该出现可确认的卡片
+        verify(proposalMapper, never()).insert(any(AiActionProposal.class));
     }
 
     @Test

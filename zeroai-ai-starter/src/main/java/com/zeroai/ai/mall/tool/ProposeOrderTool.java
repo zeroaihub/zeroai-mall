@@ -86,8 +86,9 @@ public class ProposeOrderTool {
     /**
      * 把购物车下发到前端弹层，等待用户勾选。
      * <p>
-     * 未登录、购物车为空、没有收货地址都属于「可预期的用户态」，返回结构化提示让模型引导用户，
+     * 未登录、购物车为空属于「可预期的用户态」，返回结构化提示让模型引导用户，
      * 而不是抛异常——抛异常会终止整轮回答，用户只看到一句「服务繁忙」。
+     * 没有收货地址不再算失败：弹层会弹出来让用户选或新增，提交前必须选一个。
      *
      * @param addressId    收货地址 ID，可为空
      * @param userCouponId 优惠券 ID，可为空
@@ -118,9 +119,14 @@ public class ProposeOrderTool {
         } catch (RuntimeException e) {
             return "{\"error\":\"CART_SELECTION_FAILED\",\"hint\":\"购物车弹层下发失败，请提示用户去购物车页操作\"}";
         }
+        // 地址为空不是失败：弹层里会让用户选或新增地址，但模型别再自己编一个地址出来
+        String addressHint = selection.addressId() == null
+                ? "用户还没有收货地址，请让他在弹层里选择或新增，不要自己编造地址"
+                : "让用户在弹层里核对收货地址、商品和数量";
         return "{\"status\":\"NEED_CART_SELECTION\","
                 + "\"itemCount\":" + selection.items().size()
-                + ",\"hint\":\"已在对话内弹出购物车，请让用户在弹层里确认商品和数量并点『生成下单提议』，"
+                + ",\"addressMissing\":" + (selection.addressId() == null)
+                + ",\"hint\":\"已在对话内弹出购物车，" + addressHint + "，然后点『生成下单提议』，"
                 + "本轮不要重复调用 propose_order，也不要再列商品清单\"}";
     }
 }

@@ -125,11 +125,23 @@ public class CartWriteSupport {
         String lockKey = RedisKeyEnum.CART_LOCK.getKey(userId);
         return tradeLockSupport.executeWithLock(lockKey, 2,
                 () -> new BusinessException(ReturnCodeEnum.ERROR, "购物车操作频繁，请稍后重试"),
-                () -> cartMapper.update(null, Wrappers.lambdaUpdate(Cart.class)
-                        .set(Cart::getChecked, checked)
-                        .set(Cart::getUpdateTime, LocalDateTime.now())
-                        .eq(Cart::getId, cartId)
-                        .eq(Cart::getUserId, Math.toIntExact(userId))) > 0);
+                () -> {
+                    int rows = cartMapper.update(null, Wrappers.lambdaUpdate(Cart.class)
+                            .set(Cart::getChecked, checked)
+                            .set(Cart::getUpdateTime, LocalDateTime.now())
+                            .eq(Cart::getId, cartId)
+                            .eq(Cart::getUserId, Math.toIntExact(userId)));
+                    if (rows > 0) {
+                        return true;
+                    }
+                    /*
+                     * MySQL 在「值没有变化」时返回 0 行受影响（update_time 落到同一秒时尤其常见），
+                     * 不能据此报「操作失败」：用户重复点同一个勾选状态是合法操作，
+                     * 报错只会让人以为没生效、再点一次。这里按归属是否存在来判定结果。
+                     */
+                    Cart existing = cartMapper.selectById(cartId);
+                    return existing != null && Objects.equals(existing.getUserId(), Math.toIntExact(userId));
+                });
     }
 
     /**

@@ -229,19 +229,24 @@ public class ActionProposalService {
      * {@code checked=true} 的行。
      *
      * @param userId       当前登录用户 ID
-     * @param addressId    收货地址 ID，可为空（为空时取默认地址）
+     * @param addressId    收货地址 ID，可为空（为空时取默认地址；没有地址则留空，由用户在弹层里补）
      * @param userCouponId 用户优惠券 ID，可为空
      * @return 购物车与地址快照；购物车为空时返回 null
-     * @throws BusinessException 用户没有任何可用收货地址
+     * @throws BusinessException 显式传入的地址不属于本人
      */
     public CartSelection prepareCartSelection(Long userId, Long addressId, Long userCouponId,
                                               List<Long> cartIds) {
         if (userId == null) {
             throw new IllegalStateException("未登录用户不允许准备下单");
         }
-        Address address = resolveAddress(userId, addressId);
+        /*
+         * 地址允许为空：用户还没有收货地址时也要能把弹层弹出来，
+         * 否则「说下单 → 被告知没地址」之后就无路可走，只能自己去菜单里找地址页。
+         * 弹层里会显示「请选择收货地址」并提供新增入口，提交前仍必须选一个。
+         */
+        Address address = resolveAddressOrNull(userId, addressId);
         log.info("准备下单选择 userId={} 解析地址 addressId={} requested={} cartIds={}",
-                userId, address.getId(), addressId, cartIds);
+                userId, address == null ? null : address.getId(), addressId, cartIds);
         List<Cart> carts = loadSelectionCarts(userId, normalizeCartIds(cartIds));
         if (carts == null || carts.isEmpty()) {
             return null;
@@ -259,9 +264,11 @@ public class ActionProposalService {
                     cart.getGoodsName(), cart.getPrice(), cart.getNumber(),
                     Boolean.TRUE.equals(cart.getChecked()), cart.getPicUrl()));
         }
-        log.info("准备下单选择完成 userId={} addressId={} itemCount={} totalNumber={}",
-                userId, address.getId(), items.size(), totalNumber);
-        return new CartSelection(address.getId(), addressText(address), userCouponId, items, totalNumber);
+        log.info("准备下单选择完成 userId={} addressId={} hasAddress={} itemCount={} totalNumber={}",
+                userId, address == null ? null : address.getId(), address != null,
+                items.size(), totalNumber);
+        return new CartSelection(address == null ? null : address.getId(),
+                address == null ? "" : addressText(address), userCouponId, items, totalNumber);
     }
 
     /**
@@ -313,6 +320,11 @@ public class ActionProposalService {
      */
     public ProposalVO createProposalForSelection(Long userId, Long addressId,
                                                  Long userCouponId, List<Long> cartIds) {
+        // 地址必须由用户在弹层里显式选过：这里拒绝空值，而不是悄悄退回默认地址，
+        // 否则「用户没确认地址」又会以另一种形式回来（界面看不出，地址却已定）
+        if (addressId == null) {
+            throw new BusinessException("请先选择收货地址");
+        }
         Long resolved = resolveAddress(userId, addressId).getId();
         log.info("按勾选生成提议 userId={} requestedAddress={} resolvedAddress={} cartIds={}",
                 userId, addressId, resolved, cartIds);
@@ -331,6 +343,28 @@ public class ActionProposalService {
      * @throws BusinessException 用户没有可用地址或地址不属于本人
      */
     private Address resolveAddress(Long userId, Long addressId) {
+        Address address = resolveAddressOrNull(userId, addressId);
+        if (address == null) {
+            throw new BusinessException("还没有收货地址，请先在「我的-收货地址」添加");
+        }
+        return address;
+    }
+
+    /**
+     * 解析收货地址，允许「一条都没有」。
+     * <p>
+     * 与 {@link #resolveAddress} 的差别只在「没有任何地址」这一种情况：
+     * 生成提议时地址是硬前提，必须报错；而弹出勾选弹层时地址可以由用户在弹层里补，
+     * 此时返回 null 让前端展示「请选择收货地址」。
+     * <p>
+     * 显式传入但归属不符的地址一律报错，不因为「允许为空」就放过越权。
+     *
+     * @param userId    当前用户 ID
+     * @param addressId 显式指定地址，可为空
+     * @return 可用地址；用户没有任何地址时返回 null
+     * @throws BusinessException 显式传入的地址不存在或不属于本人
+     */
+    private Address resolveAddressOrNull(Long userId, Long addressId) {
         if (addressId != null) {
             Address address = addressService.getById(addressId);
             if (address == null || !Objects.equals(address.getMemberId(), userId)) {
@@ -343,10 +377,7 @@ public class ActionProposalService {
                 .orderByDesc("is_default")
                 .orderByDesc("id")
                 .last("LIMIT 1"));
-        if (addresses == null || addresses.isEmpty()) {
-            throw new BusinessException("还没有收货地址，请先在「我的-收货地址」添加");
-        }
-        return addresses.get(0);
+        return addresses == null || addresses.isEmpty() ? null : addresses.get(0);
     }
 
     /**
@@ -1106,7 +1137,33 @@ public class ActionProposalService {
     }
 
     /**
-     * 实体转对外视图。刻意不暴露主键、幂等键、地址与联系方式。
+     * 提议展示用的收货地址摘要。
+     * <p>
+     * 用户在点「确认下单」之前必须能看到「这一单寄到哪」，否则等于盲签：
+     * 地址是确认决策的一部分，不是可选装饰。这里只给摘要（收件人 + 脱敏手机号 + 省市区门牌），
+     * 手机号不下发原值。
+     * <p>
+     * 查询失败或地址在提议生成后被删除时返回 null，由前端提示「收货地址已失效，请重新选择」；
+     * 视图组装不能因为一个展示字段失败就整体抛错，那样用户连金额和商品都看不到。
+     *
+     * @param addressId 提议快照里的地址 ID，可为空
+     * @return 地址摘要；无法解析时为 null
+     */
+    private String resolveAddressText(Long addressId) {
+        if (addressId == null) {
+            return null;
+        }
+        try {
+            Address address = addressService.getById(addressId);
+            return address == null ? null : addressText(address);
+        } catch (RuntimeException e) {
+            log.warn("提议地址解析失败 addressId={} error={}", addressId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 实体转对外视图。刻意不暴露主键、幂等键与联系方式原值（地址只给脱敏摘要）。
      *
      * @param proposal 提议实体
      * @return 对外视图
@@ -1133,6 +1190,7 @@ public class ActionProposalService {
                 proposal.getFreightPrice(),
                 proposal.getCouponPrice(),
                 proposal.getExpireTime() == null ? null : proposal.getExpireTime().format(TIME_FORMATTER),
+                resolveAddressText(proposal.getAddressId()),
                 items,
                 proposal.getOrderSn(),
                 proposal.getFailCode(),

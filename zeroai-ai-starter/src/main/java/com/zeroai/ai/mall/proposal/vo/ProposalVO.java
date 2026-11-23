@@ -7,7 +7,11 @@ import java.util.List;
  * 提议对外视图。
  * <p>
  * 只暴露用户确认决策需要的字段，不暴露内部主键、幂等键、快照原文；
- * 商品名与价格来自用户自己的购物车，可以展示，但不下发地址明细与手机号。
+ * 商品名与价格来自用户自己的购物车，可以展示。
+ * <p>
+ * 收货地址必须下发摘要：用户点「确认下单」之前要能核对「这一单寄到哪」，
+ * 只给金额和件数等于让他盲签。摘要含收件人、脱敏手机号与省市区门牌，
+ * 但不下发手机号原值，也不下发 addressId 以外的地址内部字段。
  *
  * @param proposalNo  对外提议编号
  * @param status      状态，取值见 {@code ProposalStatus}
@@ -17,6 +21,7 @@ import java.util.List;
  * @param freightPrice 运费快照
  * @param couponPrice 优惠金额快照
  * @param expireAt    过期时间（ISO-8601）
+ * @param addressText 收货地址摘要，地址已被删除时为 null
  * @param items       商品行摘要
  * @param orderSn     确认成功后的订单号，未确认时为 null
  * @param failCode    确认失败原因码，成功时为 null
@@ -30,6 +35,7 @@ public record ProposalVO(String proposalNo,
                          BigDecimal freightPrice,
                          BigDecimal couponPrice,
                          String expireAt,
+                         String addressText,
                          List<ItemVO> items,
                          String orderSn,
                          String failCode,
