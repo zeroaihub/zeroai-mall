@@ -2,6 +2,7 @@ package com.zeroai.ai.config;
 
 import com.zeroai.ai.agent.AgentChatHandler;
 import com.zeroai.ai.engine.ChatStreamEngine;
+import com.zeroai.ai.engine.langchain4j.agent.Lc4jAgentHandler;
 import com.zeroai.ai.history.AiChatHistory;
 import com.zeroai.ai.web.AiChatController;
 import com.zeroai.ai.web.AiUserContext;
@@ -57,8 +58,9 @@ public class AiAgentAutoConfiguration {
                                              AiAgentProperties properties,
                                              AiUserContext userContext,
                                              ObjectProvider<AgentChatHandler> agentHandlerProvider,
+                                             ObjectProvider<Lc4jAgentHandler> lc4jHandlerProvider,
                                              ObjectProvider<AiChatHistory> chatHistoryProvider) {
         return new AiChatController(engineProvider, properties, userContext,
-                agentHandlerProvider, chatHistoryProvider);
+                agentHandlerProvider, lc4jHandlerProvider, chatHistoryProvider);
     }
 }

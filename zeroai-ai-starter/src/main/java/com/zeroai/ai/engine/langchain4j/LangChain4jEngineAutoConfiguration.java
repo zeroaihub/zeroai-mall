@@ -1,9 +1,24 @@
 package com.zeroai.ai.engine.langchain4j;
 
 import com.zeroai.ai.config.AiAgentProperties;
+import com.zeroai.ai.engine.langchain4j.agent.Lc4jAgentHandler;
+import com.zeroai.ai.history.AiChatHistory;
+import com.zeroai.ai.knowledge.KnowledgeService;
+import com.zeroai.ai.mall.port.MallSearchPort;
+import com.zeroai.ai.mall.proposal.ActionProposalProperties;
+import com.zeroai.ai.mall.proposal.ActionProposalService;
 import com.zeroai.ai.prompt.PromptLoader;
+import com.zeroai.domain.api.cart.service.ICartService;
+import com.zeroai.domain.api.goods.service.IGoodsDetailService;
+import com.zeroai.domain.api.goods.service.IGoodsProductService;
+import com.zeroai.domain.api.goods.service.IGoodsService;
+import com.zeroai.domain.api.trade.service.IAddressService;
+import com.zeroai.domain.api.trade.service.IMobileOrderService;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -23,6 +38,10 @@ import java.time.Duration;
  * 复用 {@link AiAgentProperties} 的 baseUrl / apiKey / model / temperature / maxTokens /
  * systemPrompt：两套引擎必须能对着同一份配置直接对拍，否则「切换引擎」就变成了「切换模型」，
  * 体验差异无法归因到框架本身。
+ * <p>
+ * 本类注册两样东西：单轮流式引擎（降级兜底）与带工具的 Agent 编排器（主链路，
+ * 对标 AgentScope 的 AgentChatHandler + MallAgentFactory）。业务服务 Bean
+ * （商品/购物车/订单/地址/提议）与 AgentScope 通道共享同一批宿主 Bean，见 ADR-003。
  */
 @AutoConfiguration
 @ConditionalOnProperty(prefix = "zeroai.ai", name = "enabled", havingValue = "true")
@@ -30,8 +49,10 @@ import java.time.Duration;
 @EnableConfigurationProperties(AiAgentProperties.class)
 public class LangChain4jEngineAutoConfiguration {
 
+    private static final Logger log = LoggerFactory.getLogger(LangChain4jEngineAutoConfiguration.class);
+
     /**
-     * LangChain4j 单轮引擎。
+     * LangChain4j 单轮引擎（降级兜底：Agent 编排异常时保持对话可用）。
      *
      * @param properties AI 配置
      * @return 引擎实现
@@ -41,6 +62,69 @@ public class LangChain4jEngineAutoConfiguration {
     public LangChain4jChatStreamEngine langChain4jChatStreamEngine(AiAgentProperties properties) {
         return new LangChain4jChatStreamEngine(buildStreamingModel(properties),
                 PromptLoader.load(properties.getSystemPrompt()));
+    }
+
+    /**
+     * LangChain4j 带工具的 Agent 编排器。
+     * <p>
+     * 业务服务与 AgentScope 通道共享同一批宿主 Bean；工具实现是 langchain4j.tool 包的
+     * 平行版本（不 import mall.tool），见 ADR-003。能力开关日志与 AgentScope 装配对齐，
+     * 便于切换引擎时直接对比两边的装配结果。
+     *
+     * @param properties          AI 配置
+     * @param model               流式模型
+     * @param searchPortProvider  检索端口提供者，可为空
+     * @param goodsDetailService  商品详情服务
+     * @param goodsService        商品服务（按 ID 回显商品卡）
+     * @param goodsProductService 商品货品服务（只读用途）
+     * @param mobileOrderService  订单服务（只读用途）
+     * @param addressService      地址服务（只读用途）
+     * @param cartService         购物车服务
+     * @param actionProposalProvider 提议服务提供者，写操作提议关闭时为空
+     * @param actionProperties    提议配置
+     * @param knowledgeProvider   知识检索门面提供者，知识库关闭时为空
+     * @param chatHistoryProvider 对话历史门面提供者
+     * @return Agent 编排器
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public Lc4jAgentHandler lc4jAgentHandler(AiAgentProperties properties,
+                                             ObjectProvider<MallSearchPort> searchPortProvider,
+                                             ObjectProvider<IGoodsDetailService> goodsDetailProvider,
+                                             ObjectProvider<IGoodsService> goodsServiceProvider,
+                                             ObjectProvider<IGoodsProductService> goodsProductProvider,
+                                             ObjectProvider<IMobileOrderService> mobileOrderProvider,
+                                             ObjectProvider<IAddressService> addressProvider,
+                                             ObjectProvider<ICartService> cartProvider,
+                                             ObjectProvider<ActionProposalService> actionProposalProvider,
+                                             ObjectProvider<ActionProposalProperties> actionPropertiesProvider,
+                                             ObjectProvider<KnowledgeService> knowledgeProvider,
+                                             ObjectProvider<AiChatHistory> chatHistoryProvider) {
+        KnowledgeService knowledgeService = knowledgeProvider.getIfAvailable();
+        // 提议配置只在提议模块装配时注册；缺失（如最小上下文测试）时用默认值，即提议关闭
+        ActionProposalProperties actionProperties = actionPropertiesProvider.getIfAvailable();
+        if (actionProperties == null) {
+            actionProperties = new ActionProposalProperties();
+        }
+        MallSearchPort searchPort = searchPortProvider.getIfAvailable();
+        log.info("LangChain4j Agent 通道配置 engine=langchain4j model={} actionEnabled={} knowledgeEnabled={}"
+                        + " searchPortWired={} cartServiceWired={}",
+                properties.getModel(), actionProperties.isEnabled(), knowledgeService != null,
+                searchPort != null, cartProvider.getIfAvailable() != null);
+        return new Lc4jAgentHandler(properties,
+                buildStreamingModel(properties),
+                PromptLoader.load(properties.getSystemPrompt()),
+                searchPort,
+                goodsDetailProvider.getIfAvailable(),
+                goodsServiceProvider.getIfAvailable(),
+                goodsProductProvider.getIfAvailable(),
+                mobileOrderProvider.getIfAvailable(),
+                addressProvider.getIfAvailable(),
+                cartProvider.getIfAvailable(),
+                actionProposalProvider.getIfAvailable(),
+                actionProperties,
+                knowledgeService,
+                chatHistoryProvider.getIfAvailable());
     }
 
     /**

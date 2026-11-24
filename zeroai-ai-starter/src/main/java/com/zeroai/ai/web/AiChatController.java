@@ -7,6 +7,7 @@ import com.zeroai.ai.engine.ChatEngineSelector;
 import com.zeroai.ai.engine.ChatStreamEngine;
 import com.zeroai.ai.engine.ChatStreamHandle;
 import com.zeroai.ai.engine.ChatStreamListener;
+import com.zeroai.ai.engine.langchain4j.agent.Lc4jAgentHandler;
 import com.zeroai.ai.history.AiChatHistory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,6 +71,14 @@ public class AiChatController {
     private final ObjectProvider<AgentChatHandler> agentHandlerProvider;
 
     /**
+     * LangChain4j Agent 编排器。
+     * <p>
+     * 与 {@link #agentHandlerProvider} 同理：只在 {@code engine=langchain4j} 时装配，
+     * 取不到即代表当前未启用该通道（回落单轮）。
+     */
+    private final ObjectProvider<Lc4jAgentHandler> lc4jHandlerProvider;
+
+    /**
      * 对话历史门面。用 {@link ObjectProvider} 取，取不到时按「不记录历史」处理。
      */
     private final ObjectProvider<AiChatHistory> chatHistoryProvider;
@@ -78,11 +87,13 @@ public class AiChatController {
                             AiAgentProperties properties,
                             AiUserContext userContext,
                             ObjectProvider<AgentChatHandler> agentHandlerProvider,
+                            ObjectProvider<Lc4jAgentHandler> lc4jHandlerProvider,
                             ObjectProvider<AiChatHistory> chatHistoryProvider) {
         this.engineProvider = engineProvider;
         this.properties = properties;
         this.userContext = userContext;
         this.agentHandlerProvider = agentHandlerProvider;
+        this.lc4jHandlerProvider = lc4jHandlerProvider;
         this.chatHistoryProvider = chatHistoryProvider;
     }
 
@@ -127,6 +138,18 @@ public class AiChatController {
                     userId, sessionId, properties.getEngine(), question.length(), preview(question));
             agentHandler.handle(sink, userId, sessionId, question);
             return sink.emitter();
+        }
+
+        // LangChain4j Agent 通道（带工具）：装配未生效时回落单轮，与 agentscope 的降级策略一致
+        if (ChatEngineNames.LANGCHAIN4J.equalsIgnoreCase(properties.getEngine())) {
+            Lc4jAgentHandler lc4jHandler = lc4jHandlerProvider.getIfAvailable();
+            if (lc4jHandler != null) {
+                log.info("AI 对话分发 userId={} sessionId={} engine={} channel=lc4j-agent questionLength={} preview=\"{}\"",
+                        userId, sessionId, properties.getEngine(), question.length(), preview(question));
+                lc4jHandler.handle(sink, userId, sessionId, question);
+                return sink.emitter();
+            }
+            log.warn("zeroai.ai.engine=langchain4j 但 Agent 装配未生效，降级为单轮通道");
         }
 
         ChatStreamEngine engine = resolveStreamEngine();

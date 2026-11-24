@@ -1,0 +1,130 @@
+package com.zeroai.ai.engine.langchain4j.tool;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.zeroai.domain.api.trade.entity.Address;
+import com.zeroai.domain.api.trade.service.IAddressService;
+import dev.langchain4j.agent.tool.P;
+import dev.langchain4j.agent.tool.Tool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.List;
+
+/**
+ * 只读工具：当前用户的收货地址（LangChain4j 版）。
+ * <p>
+ * 行为与 {@code com.zeroai.ai.mall.tool.ListMyAddressesTool}（AgentScope 版）完全一致：
+ * userId 构造期注入；手机号与收件人姓名脱敏后返回。
+ * <b>两边方法体必须同步修改</b>，见 ADR-003。
+ */
+public class ListMyAddressesTool {
+
+    private static final Logger log = LoggerFactory.getLogger(ListMyAddressesTool.class);
+
+    /** 单次返回地址数上限。 */
+    private static final int MAX_LIMIT = 5;
+
+    private final IAddressService addressService;
+    private final Long userId;
+
+    /**
+     * @param addressService 地址服务，只读
+     * @param userId         当前登录用户 ID，必须非空
+     */
+    public ListMyAddressesTool(IAddressService addressService, Long userId) {
+        if (userId == null) {
+            throw new IllegalArgumentException("userId 不能为空：未登录用户不允许查询地址");
+        }
+        this.addressService = addressService;
+        this.userId = userId;
+    }
+
+    /**
+     * 查询当前用户的收货地址（脱敏）。
+     *
+     * @param limit 期望返回条数，缺省 3，最大 5
+     * @return JSON 字符串，含 addressId / 收件人脱敏 / 手机号脱敏 / 省市区 / 是否默认
+     */
+    @Tool(name = "list_my_addresses",
+            value = "查询当前登录用户本人的收货地址列表（姓名和手机号已脱敏）。只读操作。返回 addressId 供 propose_order 使用。")
+    public String listMyAddresses(@P(value = "期望返回条数，缺省 3，最大 5", required = false) Integer limit) {
+        int size = limit == null ? 3 : Math.min(Math.max(limit, 1), MAX_LIMIT);
+        log.info("工具调用 list_my_addresses userId={} limit={}", userId, size);
+        List<Address> addresses;
+        try {
+            addresses = addressService.list(Wrappers.lambdaQuery(Address.class)
+                    .eq(Address::getMemberId, userId)
+                    .eq(Address::getDelFlag, false)
+                    .last("LIMIT " + size));
+        } catch (RuntimeException e) {
+            log.warn("工具失败 list_my_addresses userId={} error={}", userId, e.getMessage());
+            return "{\"error\":\"ADDRESS_UNAVAILABLE\",\"hint\":\"地址查询失败，请稍后再试\"}";
+        }
+        if (addresses == null || addresses.isEmpty()) {
+            log.info("工具结果 list_my_addresses userId={} count=0", userId);
+            return "{\"count\":0,\"addresses\":[],\"hint\":\"还没有收货地址，请提示用户先在页面添加\"}";
+        }
+        StringBuilder sb = new StringBuilder(128 + addresses.size() * 128);
+        sb.append("{\"count\":").append(addresses.size()).append(",\"addresses\":[");
+        for (int i = 0; i < addresses.size(); i++) {
+            Address address = addresses.get(i);
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append("{\"addressId\":").append(JsonText.num(address.getId()))
+                    .append(",\"receiver\":").append(JsonText.str(maskName(address.getName())))
+                    .append(",\"tel\":").append(JsonText.str(maskTel(address.getTel())))
+                    .append(",\"region\":").append(JsonText.str(regionOf(address)))
+                    .append(",\"isDefault\":").append(address.isDefault())
+                    .append('}');
+        }
+        log.info("工具结果 list_my_addresses userId={} count={} defaultId={}", userId, addresses.size(),
+                addresses.stream().filter(Address::isDefault).map(Address::getId).findFirst().orElse(null));
+        return sb.append("]}").toString();
+    }
+
+    /**
+     * 收件人脱敏：只保留姓与末位。
+     *
+     * @param name 原姓名
+     * @return 脱敏姓名
+     */
+    private static String maskName(String name) {
+        if (name == null || name.isEmpty()) {
+            return "";
+        }
+        if (name.length() == 1) {
+            return name;
+        }
+        return name.charAt(0) + "**";
+    }
+
+    /**
+     * 手机号脱敏：保留前 3 位与后 2 位。
+     *
+     * @param tel 原手机号
+     * @return 脱敏手机号
+     */
+    private static String maskTel(String tel) {
+        if (tel == null || tel.length() < 5) {
+            return tel == null ? "" : "****";
+        }
+        return tel.substring(0, 3) + "****" + tel.substring(tel.length() - 2);
+    }
+
+    /**
+     * 省市区拼接。
+     *
+     * @param address 地址
+     * @return 省市区文本
+     */
+    private static String regionOf(Address address) {
+        StringBuilder sb = new StringBuilder();
+        for (String part : new String[]{address.getProvince(), address.getCity(), address.getCounty()}) {
+            if (part != null && !part.isBlank()) {
+                sb.append(part);
+            }
+        }
+        return sb.toString();
+    }
+}

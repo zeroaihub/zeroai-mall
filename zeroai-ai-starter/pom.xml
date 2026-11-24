@@ -77,12 +77,18 @@
                 </exclusion>
             </exclusions>
         </dependency>
-        <!-- ===== LangChain4j（单轮流式对话的可选引擎）=====
+        <!-- ===== LangChain4j（单轮流式对话 + AiServices 工具编排的可选引擎）=====
              只在 zeroai.ai.engine=langchain4j 时装配 Bean，代码全部隔离在
              com.zeroai.ai.engine.langchain4j 包内，与 Spring AI 适配器互不引用。
-             选 OpenAi 集成而非 langchain4j 聚合包：本项目的模型端点是 OpenAI 兼容协议
+             选 OpenAi 集成而非 langchain4j-spring-boot-starter：本项目的模型端点是 OpenAI 兼容协议
              （baseUrl 可指 DeepSeek/通义），与既有配置项完全复用，不需要第二套密钥约定。
-             HTTP 层用自带的 JDK 实现（runtime 传递引入），不引入 okhttp。 -->
+             HTTP 层用自带的 JDK 实现（runtime 传递引入），不引入 okhttp。
+             主 jar langchain4j 只为 AiServices（带工具的 Agent 编排）引入，见 ADR-003。 -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j</artifactId>
+            <version>${langchain4j.version}</version>
+        </dependency>
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-open-ai</artifactId>
