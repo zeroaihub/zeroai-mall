@@ -84,6 +84,11 @@
         <!-- AgentScope Java。Maven Central 的 <latest>/<release> 指向 2.1.0-BETA1，
             按 release 取会误装 beta，必须写死 2.0.4。升级前先跑 docs/agent/ADR-001 的兼容性检查。 -->
         <agentscope.version>2.0.4</agentscope.version>
+        <!-- LangChain4j：单轮流式对话的可选引擎，仅被 com.zeroai.ai.engine.langchain4j 适配器使用。
+             1.24.0 = 2026-11 核对 repo1.maven.org maven-metadata.xml 的 <release>，
+             不是 beta/rc。它自带 JDK HttpClient 实现（langchain4j-http-client-jdk），
+             不引入 okhttp，因此与 openai-java 4.80.0 的 okhttp 4.12.0 无冲突。见 ADR-002。 -->
+        <langchain4j.version>1.24.0</langchain4j.version>
         <!-- victools 版本仲裁：Spring AI 2.0.2 依赖 5.0.0，AgentScope 2.0.4 依赖 4.38.0，
              两个都是 compile 作用域且大版本不兼容（5.x 移除了 4.x 的 generateSchema 重载，
              运行时抛 NoSuchMethodError）。此处统一钉 4.38.0：

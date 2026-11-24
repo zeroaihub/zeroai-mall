@@ -293,7 +293,7 @@ MCP 是独立开关：即使 `AI_ENABLED=false`，也可以只为其他 Agent �
 ```bash
 # .env 里平铺写即可，yml 已显式映射
 AI_ENABLED=true
-AI_ENGINE=agentscope          # spring-ai（单轮问答）/ agentscope（带工具，推荐）
+AI_ENGINE=agentscope          # spring-ai / langchain4j（单轮问答）/ agentscope（带工具，推荐）
 LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY=sk-xxxxxxxxxxxxxxxx
 LLM_MODEL=deepseek-flash
@@ -308,7 +308,7 @@ MCP_TOKEN_SECRET=             # 至少 32 字节，必须与登录/模型/支付
 zeroai:
   ai:
     enabled: ${AI_ENABLED:false}
-    engine: ${AI_ENGINE:spring-ai}        # 双引擎：单轮问答 / 带工具的 Agent
+    engine: ${AI_ENGINE:spring-ai}        # 三引擎：spring-ai / langchain4j（单轮问答）、agentscope（带工具）
     model: ${LLM_MODEL:deepseek-flash}
     max-steps: 6                          # 单轮最大工具步数，防死循环
     max-tool-calls-per-turn: 6
@@ -351,6 +351,24 @@ zeroai:
 
 > **换模型不用改代码**：走 OpenAI 兼容协议，DeepSeek / 通义 / 硅基流动 / 本地 vLLM 只改 `LLM_BASE_URL` + `LLM_MODEL`。
 > **密钥只走环境变量**，任何配置文件里都不允许出现 `LLM_API_KEY` 明文。
+
+#### 引擎切换与代码隔离
+
+`zeroai.ai.engine` 的三种取值对应三条实现，SSE 事件协议一致，前端不需要改：
+
+| 取值 | 能力 | 实现位置 | 依赖 |
+|---|---|---|---|
+| `spring-ai`（默认） | 单轮问答，无工具 | `com.zeroai.ai.engine.springai` | `spring-ai-openai` |
+| `langchain4j` | 单轮问答，无工具（与 spring-ai 同契约、同配置） | `com.zeroai.ai.engine.langchain4j` | `langchain4j-open-ai` |
+| `agentscope` | 带只读商城工具的 Agent（商品卡/加购/下单提议） | `com.zeroai.ai.agent` | `agentscope-harness` |
+
+隔离规则（改动前先看 `docs/agent/ADR-002-langchain4j-engine-isolation.md`）：
+
+- 控制器只面向端口 `com.zeroai.ai.engine.ChatStreamEngine`，不 import 任何模型 SDK 类型；
+- Spring AI 与 LangChain4j 各自一个包，只能 import 自己的 SDK，两者互不引用；
+- 选引擎由 `ChatEngineSelector` 按配置名完成，名字写错会回落 `spring-ai` 并在日志里告警；
+- 两套引擎共用 `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` / `zeroai.ai.system-prompt`，
+  切引擎只换框架、不换环境，否则体验差异无法归因到框架本身。
 
 <details>
 <summary><b>在别的项目里复用这套能力（三步）</b></summary>

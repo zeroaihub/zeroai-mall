@@ -25,10 +25,17 @@ public class AiAgentProperties {
      * 引擎选择，决定 {@code /ai/chat} 走哪条实现：
      * <ul>
      *   <li>{@code spring-ai} —— 默认，零工具单轮问答，复用现有 ChatClient，行为与接入前完全一致。</li>
+     *   <li>{@code langchain4j} —— 零工具单轮问答的另一种实现，走 LangChain4j 适配器；
+     *       与 spring-ai 同契约、同配置项（baseUrl / apiKey / model / systemPrompt），
+     *       便于对着同一份配置横向对比两套框架。</li>
      *   <li>{@code agentscope} —— 启用 AgentScope Harness，可调用只读商城工具。</li>
      * </ul>
-     * 两条通道共用 baseUrl / apiKey / model，不引入第二套密钥约定。
+     * 三者共用 baseUrl / apiKey / model，不引入第二套密钥约定。
      * 切换引擎不改变任何前端契约，SSE 事件协议保持一致。
+     * <p>
+     * 隔离约束：Spring AI 与 LangChain4j 的代码分别位于
+     * {@code com.zeroai.ai.engine.springai} 与 {@code com.zeroai.ai.engine.langchain4j}，
+     * 通过 {@code com.zeroai.ai.engine.ChatStreamEngine} 端口接入，两者互不引用。见 ADR-002。
      */
     private String engine = "spring-ai";
 

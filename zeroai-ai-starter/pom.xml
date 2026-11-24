@@ -77,6 +77,17 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        <!-- ===== LangChain4j（单轮流式对话的可选引擎）=====
+             只在 zeroai.ai.engine=langchain4j 时装配 Bean，代码全部隔离在
+             com.zeroai.ai.engine.langchain4j 包内，与 Spring AI 适配器互不引用。
+             选 OpenAi 集成而非 langchain4j 聚合包：本项目的模型端点是 OpenAI 兼容协议
+             （baseUrl 可指 DeepSeek/通义），与既有配置项完全复用，不需要第二套密钥约定。
+             HTTP 层用自带的 JDK 实现（runtime 传递引入），不引入 okhttp。 -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai</artifactId>
+            <version>${langchain4j.version}</version>
+        </dependency>
         <!-- ===== 商城只读工具所需的领域契约 =====
              optional=true：只有本模块的 mall.tool 包需要它，不向其他引用方透传整套持久化栈。
              注意：domain-api 并非纯接口包（自带 web/amqp/mybatis-plus 与 Mapper），
