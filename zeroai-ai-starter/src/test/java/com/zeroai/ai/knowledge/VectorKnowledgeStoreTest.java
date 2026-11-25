@@ -102,7 +102,8 @@ class VectorKnowledgeStoreTest {
 
         VectorKnowledgeStore.Report report = store.sync();
 
-        assertEquals(6, report.documents(), "知识库固定 6 篇，改动这里说明知识源变了");
+        assertEquals(18, report.documents(),
+                "知识库 18 篇：5 篇商城通用规则 + 13 篇售后语料；增删知识源时必须同步这里");
         assertTrue(report.chunks() > report.documents(), "平均每篇至少切成一块以上");
         assertEquals(0, report.rejected());
         assertTrue(store.size() > 0);
@@ -179,8 +180,9 @@ class VectorKnowledgeStoreTest {
 
         VectorKnowledgeStore.Report report = store.sync();
 
-        // 6 篇文档、chunk-size 300：正常在 20~40 块之间；超过 100 说明切块逻辑退化成逐行切
-        assertTrue(report.chunks() < 100, "模块数异常，实际=" + report.chunks());
-        assertTrue(report.chunks() >= 6, "至少每篇一块，实际=" + report.chunks());
+        // 18 篇文档、chunk-size 300：实测 152 块（平均 8.4 块/篇）。上限按「每篇 15 块」，
+        // 超过说明切块逻辑退化成逐行切——这个判断与语料篇数无关，扩语料时不必改这里。
+        assertTrue(report.chunks() < report.documents() * 15, "模块数异常，实际=" + report.chunks());
+        assertTrue(report.chunks() >= report.documents(), "至少每篇一块，实际=" + report.chunks());
     }
 }

@@ -20,7 +20,7 @@ import java.util.Map;
  * 知识源是 classpath 下的 Markdown 文件（{@code knowledge/*.md}），每篇带 YAML frontmatter：
  * <pre>
  * ---
- * sourceId: kb-after-sale-refund
+ * sourceId: kb-aftersale-policy
  * title: 退款与售后政策
  * category: after-sale
  * version: 1
