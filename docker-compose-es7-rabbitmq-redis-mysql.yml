@@ -77,6 +77,14 @@ services:
       TZ: Asia/Shanghai
     volumes:
       - ./pgvector/data:/var/lib/postgresql/data
+      # 建表脚本只在数据目录为空时执行；已有库升级请手工执行同一份 SQL
+      - ./pgvector/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGVECTOR_USER:-zeroai} -d ${PGVECTOR_DB:-zeroai_ai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     network_mode: "host"
   # 本地模型兜底通道：仅在需要离线演示时启用，默认不启动（避免所有人被迫拉取模型）
   # 启动方式：docker compose -f docker-compose-es7-rabbitmq-redis-mysql.yml --profile ollama up -d ollama

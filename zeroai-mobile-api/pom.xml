@@ -101,6 +101,14 @@
             <artifactId>zeroai-ai-starter</artifactId>
         </dependency>
 
+        <!-- PGVector 知识库驱动：仅 AI 知识检索使用，与商城 MySQL 主数据源无关。
+             连接池由 PgVectorKnowledgeStore 私有持有，不注册成 DataSource Bean。 -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- 验证码 -->
         <dependency>
             <groupId>com.github.whvcse</groupId>

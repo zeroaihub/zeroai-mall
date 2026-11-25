@@ -148,7 +148,9 @@ zeroai:
     knowledge:
       enabled: ${AI_KNOWLEDGE_ENABLED:true}
       # 检索模式：bm25（默认，ES 倒排）/ vector（纯向量）/ hybrid（两路 RRF 融合）
-      # 默认 bm25 的理由：不依赖任何 embedding 服务即可回答政策问题
+      # 默认 bm25 的理由：不依赖任何 embedding 服务即可回答政策问题。
+      # 启用 PGVector 需要同时改两个键：mode=vector + vector.store=pgvector，
+      # 并保证 embedding 服务（本地 bge-m3）已启动，否则检索会返回「不可用」。
       mode: ${AI_KNOWLEDGE_MODE:bm25}
       index: ${AI_KNOWLEDGE_INDEX:zeroai_ai_kb}
       location: knowledge
@@ -156,9 +158,20 @@ zeroai:
       max-hits: ${AI_KNOWLEDGE_MAX_HITS:3}
       max-snippet-chars: 600
       max-query-chars: 80
-      # 覆盖率要求与得分下限：检索调优参数，改这里不用改代码
-      min-should-match: ${AI_KNOWLEDGE_MIN_SHOULD_MATCH:2<70%}
-      min-score: ${AI_KNOWLEDGE_MIN_SCORE:1.5}
+      # 覆盖率要求：短查询严格、长查询放宽。
+      # 2~3 词要求 100%（两个词都必须命中），≥4 词要求 60%（容纳口语噪声）。
+      # 为什么不是简单的 "3<70%"：中文口语问句常含「要/收/多少/时候」这类碎片词元，
+      # 百分比会把它们算进分母（「安装师傅上门要收多少钱」切 6 个词 → 要求 5 个），
+      # 实测直接零命中。阶梯写法让长查询只要求核心词命中。
+      min-should-match: ${AI_KNOWLEDGE_MIN_SHOULD_MATCH:2<100% 4<60%}
+      # BM25 得分下限。必须在真实 ES + IK 上标定，分数依赖分词与索引统计，
+      # 不能用向量阈值推断，也不能用离线 bigram 代理代替。
+      # 2026-11-25 实测（18 篇 / 90 块 / 30 条用例）：可答 top1 中位 18.6，
+      # 库外最高 12.4。8.0~9.0 是零误召回平台区，取中点 8.5。
+      # 注意：这个高阈值是为 hybrid 设计的——BM25 只报高置信命中，
+      # 长尾召回交给向量分支。向量服务不可用时退回纯 BM25，召回会明显下降
+      # （实测训练集 13/22），这是有意的取舍，不是缺陷。
+      min-score: ${AI_KNOWLEDGE_MIN_SCORE:8.5}
       # 向量化服务（OpenAI 兼容 /v1/embeddings；仅 mode 非 bm25 时需要）。
       # 与对话模型是两套配置：DeepSeek 没有 embedding 接口，不能复用 LLM_API_KEY
       embedding:
@@ -172,18 +185,42 @@ zeroai:
         max-chars: 1000
         batch-size: 16
       vector:
-        # 余弦相似度下限。与上面的 min-score 量纲不同，不能互相套用
-        min-score: ${AI_KNOWLEDGE_VECTOR_MIN_SCORE:0.55}
-        chunk-size: 300
-        min-chunk-chars: 60
+        # 向量存储实现：memory（进程内索引，默认）/ pgvector（PG 持久化）。
+        # 二选一装配：同时存在两个候选会让检索路由在注入时直接失败。
+        store: ${AI_KNOWLEDGE_VECTOR_STORE:memory}
+        # 余弦相似度下限。2026-11-25 用真实 bge-m3 + 18 篇语料 + 30 条用例实测：
+        #   可答 22 条 top1：0.605 / 0.658(p25) / 0.726(中位) / 0.775 / 0.799
+        #   库外  8 条 top1：0.435 / 0.586(中位) / 0.595 / 0.648(最高)
+        # 0.65 也是 hybrid 下唯一「零误召回」的点：0.60~0.64 会把「可以开发票吗」
+        # 「支持货到付款吗」放进结果。留出集 14 条新问法验证：hit@3 8/10、误召回 0/4。
+        # 掉出的 4 条（七天无理由/随心换/售后入口/取消安装）都是字面强命中的问题，
+        # 由 hybrid 的 BM25 分支兜底；纯向量模式下这是已知缺口。
+        min-score: ${AI_KNOWLEDGE_VECTOR_MIN_SCORE:0.65}
+        # 售后语料一条规则常含「条件 + 时效 + 例外」，300 字会切在规则中间。
+        # 18 篇文档实测：500 字 90 块、300 字 152 块，两种规模对内存与 PG 都很轻。
+        chunk-size: ${AI_KNOWLEDGE_CHUNK_SIZE:500}
+        min-chunk-chars: 120
         prefix-title: true
+      # PGVector 连接（仅 vector.store=pgvector 时使用）。
+      # 密码只从环境变量注入，禁止写进仓库；账号建议只对本表有读写权限。
+      pg:
+        url: ${AI_KNOWLEDGE_PG_URL:jdbc:postgresql://127.0.0.1:5432/zeroai_ai}
+        username: ${AI_KNOWLEDGE_PG_USER:zeroai}
+        password: ${AI_KNOWLEDGE_PG_PASSWORD:}
+        table: ${AI_KNOWLEDGE_PG_TABLE:ai_knowledge_chunk}
+        pool-size: ${AI_KNOWLEDGE_PG_POOL_SIZE:4}
+        connection-timeout-ms: 3000
+        query-timeout-seconds: 5
+        visibility: ${AI_KNOWLEDGE_PG_VISIBILITY:public}
       hybrid:
         rrf-k: 60
         # 融合后阈值，默认 0：两路各自已过滤过低分，这里再设会误杀单路语义命中
         min-score: 0
-        # BM25 零命中时向量分支的最低余弦分。实测依据见 KnowledgeProperties.Hybrid 注释：
-        # 库外问题最高 0.627 且 BM25 全 0，可答问题正确文档中位 0.679，故取 0.66
-        vector-only-min-score: ${AI_KNOWLEDGE_VECTOR_ONLY_MIN_SCORE:0.66}
+        # BM25 零命中时向量分支的最低余弦分：语义是唯一证据，必须更强才算数。
+        # 2026-11-25 实测：0.65 与 vector.min-score 对齐后，8 条库外问题零误召回；
+        # 降到 0.60 会把「可以开发票吗」等放进结果。两道门设成同值是刻意的——
+        # 向量只有在「自己足够自信」时才能单独支撑一个答案。
+        vector-only-min-score: ${AI_KNOWLEDGE_VECTOR_ONLY_MIN_SCORE:0.65}
         # 向量分支挂掉时是否退回纯 BM25
         fallback-to-bm25: true
 

@@ -69,3 +69,6 @@ logs/
 
 # pnpm 12 自动生成的 allowBuilds 占位文件，不属于项目配置
 pnpm-workspace.yaml
+
+# 原始爬取语料（含平台品牌与版权内容，只在本机用于生成 resources/knowledge）
+docs/knowledge_source/

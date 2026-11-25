@@ -15,6 +15,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Conditional;
@@ -38,8 +39,9 @@ import org.springframework.context.annotation.Primary;
  *   VectorKnowledgeStore（本模块，VectorKnowledgePort）┘
  * </pre>
  * 两个实现都可以缺失，路由会给出明确的「不可用」而不是空结果。
- * 注意 {@link VectorKnowledgeStore} <b>总是</b>装配（除非整体关闭知识库），
- * 由它自己判断当前模式需不需要建向量索引——这样改配置切模式时不用改装配结构。
+ * 向量实现按 {@code zeroai.ai.knowledge.vector.store} 二选一：默认 {@code memory}
+ * （本模块的进程内索引），{@code pgvector} 时由入口模块注册持久化实现。
+ * 二选一不是风格选择——路由按类型取候选，两个同时存在会直接装配失败。
  */
 @AutoConfiguration
 @ConditionalOnExpression("${zeroai.ai.enabled:false} && ${zeroai.ai.knowledge.enabled:true}")
@@ -81,6 +83,8 @@ public class KnowledgeAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "zeroai.ai.knowledge.vector", name = "store",
+            havingValue = "memory", matchIfMissing = true)
     public VectorKnowledgeStore vectorKnowledgeStore(ObjectProvider<KnowledgeEmbedder> embedderProvider,
                                                      KnowledgeProperties properties) {
         KnowledgeEmbedder embedder = embedderProvider.getIfAvailable();

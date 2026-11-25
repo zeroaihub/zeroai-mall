@@ -1,0 +1,14 @@
+{"id": "H01", "cat": "holdout", "type": "answer", "q": "东西坏了能换新的吗", "expect": ["kb-aftersale-policy"]}
+{"id": "H02", "cat": "holdout", "type": "answer", "q": "退款一般几天能到", "expect": ["kb-aftersale-refund-timing"]}
+{"id": "H03", "cat": "holdout", "type": "answer", "q": "申请了售后一直没人处理", "expect": ["kb-aftersale-audit-urge"]}
+{"id": "H04", "cat": "holdout", "type": "answer", "q": "快递员什么时候上门取件", "expect": ["kb-aftersale-free-pickup", "kb-aftersale-return-shipping"]}
+{"id": "H05", "cat": "holdout", "type": "answer", "q": "下单后不想买了怎么撤单", "expect": ["kb-order-cancel"]}
+{"id": "H06", "cat": "holdout", "type": "answer", "q": "安装师傅上门要收多少钱", "expect": ["kb-aftersale-installation"]}
+{"id": "H07", "cat": "holdout", "type": "answer", "q": "退回去的东西运费算谁的", "expect": ["kb-aftersale-return-shipping", "kb-aftersale-free-pickup"]}
+{"id": "H08", "cat": "holdout", "type": "answer", "q": "审核结果我不认可要找谁", "expect": ["kb-aftersale-audit-dispute"]}
+{"id": "H09", "cat": "holdout", "type": "answer", "q": "哪些商品买了不能退", "expect": ["kb-aftersale-restricted-goods"]}
+{"id": "H10", "cat": "holdout", "type": "answer", "q": "售后政策是怎么规定的", "expect": ["kb-aftersale-policy"]}
+{"id": "H11", "cat": "holdout", "type": "no-answer", "q": "支持花呗吗", "expect": []}
+{"id": "H12", "cat": "holdout", "type": "no-answer", "q": "能开增值税专用发票吗", "expect": []}
+{"id": "H13", "cat": "holdout", "type": "no-answer", "q": "有以旧换新补贴吗", "expect": []}
+{"id": "H14", "cat": "holdout", "type": "no-answer", "q": "可以货到付款吗", "expect": []}

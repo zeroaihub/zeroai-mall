@@ -70,24 +70,31 @@ public class KnowledgeProperties {
      * BM25 检索得分下限，低于该值的片段直接丢弃。
      * <p>
      * BM25 分数没有统一量纲，这个值只能按语料实测调：设太高会把「换个说法问」的正常命中滤掉，
-     * 设 0 表示不启用。默认 1.5 来自本项目 29 条评测用例的实测分布：
-     * 正确命中普遍在 2.4 以上，纯噪声命中多在 1.7 以下。
+     * 设 0 表示不启用。默认 8.5 来自 2026-11-25 真实 ES 7.14 + IK + 18 篇售后语料的实测：
+     * 可答问题 top1 中位 18.6，库外最高 12.4，8.0~9.0 是零误召回平台区，取其中点。
+     * <p>
+     * <b>这个默认值是为 hybrid 设计的</b>：BM25 只报高置信命中，长尾召回交给向量分支。
+     * 向量服务不可用时退回纯 BM25，召回会明显下降（实测训练集 13/22），这是有意的取舍。
      * <p>
      * 只对 {@link KnowledgeMode#BM25} 与 {@link KnowledgeMode#HYBRID} 的 BM25 分支生效；
      * 向量分支用 {@link Vector#getMinScore()}。
      */
-    private double minScore = 1.5D;
+    private double minScore = 8.5D;
 
     /**
      * 查询词覆盖率要求，直接透传给 Elasticsearch 的 {@code minimum_should_match}。
      * <p>
-     * 默认 {@code 2<70%} 的含义是：查询切出 2 个以内的词元时必须全部命中；
-     * 超过 2 个时要求命中 70%（向下取整）。这是「问句里夹带无关词也能召回」与
-     * 「只共用一个泛词就硬凑一篇文档」之间的折中——后者会让模型拿着错文档回答政策问题，
-     * 比查不到危险得多。0.7 而不是 0.8：中文问句被 ik 切出的词元数偏多，
-     * 80% 会把「退款多久能到账」这类正常问法挡在门外（实测）。
+     * 默认 {@code 2<100% 4<60%} 是<b>阶梯写法</b>：2~3 个词元要求全部命中，4 个以上放宽到 60%。
+     * <p>
+     * 为什么不是简单的百分比：中文口语问句常含「要 / 收 / 多少 / 时候」这类碎片词元，
+     * 百分比会把它们算进分母——「安装师傅上门要收多少钱」被 ik 切成 6 个词，
+     * {@code 2<70%} 要求命中 5 个，实测直接零命中；而它的核心词只有「安装 / 师傅 / 上门」。
+     * 阶梯写法让长查询只要求核心词命中，短查询仍保持「两个词都要对得上」的精度。
+     * <p>
+     * 标定数据：30 条训练集 + 14 条留出集，在 {@code 2<100% 4<60%} 下训练集 hit@3 22/22、
+     * 库外误召回 0/8，留出集 hit@3 8/10、误召回 0/4。对比 {@code 3<70%} 留出集只有 7/10。
      */
-    private String minShouldMatch = "2<70%";
+    private String minShouldMatch = "2<100% 4<60%";
 
     /** 向量化配置。 */
     private Embedding embedding = new Embedding();
@@ -346,15 +353,30 @@ public class KnowledgeProperties {
     public static class Vector {
 
         /**
+         * 向量存储实现：{@code memory}（进程内索引，默认）/ {@code pgvector}（PG 持久化）。
+         * <p>
+         * 两个实现互斥装配：路由用 {@code ObjectProvider.getIfAvailable()} 取
+         * {@link VectorKnowledgePort}，容器里同时存在两个候选会直接抛
+         * {@code NoUniqueBeanDefinitionException}，所以不能靠「都注册、按名字选」。
+         * <p>
+         * 默认 {@code memory}：不依赖任何数据库即可完成向量检索，
+         * 是「部署方只配了 embedding」时唯一确定可用的模式。切到 {@code pgvector}
+         * 需要入口模块提供 PG 连接配置，见 {@code zeroai.ai.knowledge.pg.*}。
+         */
+        private String store = "memory";
+
+        /**
          * 余弦相似度下限，低于该值的块直接丢弃。
          * <p>
-         * 默认 0.55 的取值依据：中文 embedding 对「同主题不同问法」的相似度通常在 0.6~0.85，
-         * 对「不同主题」多在 0.2~0.4，0.55 落在两者之间。它比 BM25 的阈值更容易跨语料迁移，
-         * 因为余弦相似度的量纲是固定的 0..1，不随文档长度和词频漂移。
+         * 默认 0.65 来自 2026-11-25 真实 bge-m3 + 18 篇售后语料 + 30 条用例的实测：
+         * 可答 22 条 top1 中位 0.726，库外 8 条最高 0.648。取 0.65 时库外零误召回；
+         * 0.60~0.64 会把「可以开发票吗」「支持货到付款吗」放进结果，
+         * 0.66 起开始丢掉正常的语义命中。余弦相似度的量纲固定 0..1，
+         * 比 BM25 分数更容易跨语料迁移，但换 embedding 模型仍必须重新标定。
          * <p>
          * 设 0 表示不启用——只有在你确认「宁可不相关也别查不到」时才这么做。
          */
-        private double minScore = 0.55D;
+        private double minScore = 0.65D;
 
         /**
          * 切块目标长度（字符）。
@@ -386,6 +408,14 @@ public class KnowledgeProperties {
 
         public void setMinScore(double minScore) {
             this.minScore = minScore;
+        }
+
+        public String getStore() {
+            return store;
+        }
+
+        public void setStore(String store) {
+            this.store = store;
         }
 
         public int getChunkSize() {
@@ -455,17 +485,18 @@ public class KnowledgeProperties {
          * 也就是说 {@code vector.min-score=0.55} 之后，任何沾边的文档都能凑出一条命中，
          * 库外问题就会被硬凑成「有答案」。
          * <p>
-         * <b>0.66 的依据</b>（2026-11-12 用真实 bge-m3 + 29 条评测集实测）：
-         * 库外问题（发票/积分/货到付款）最高余弦 0.627，且 BM25 全为 0；
-         * 可答问题的正确文档余弦中位 0.679。两边的分数分布本身是重叠的
-         * （可答最低 0.559 低于库外最高 0.627），单靠余弦无法分开；
-         * 但「BM25 零命中」这个特征能把它们干净切开——所有可答问题 BM25 都 ≥ 2.45。
+         * <b>0.65 的依据</b>：2026-11-25 真实 ES + 真实 bge-m3 + 18 篇售后语料实测，
+         * 库外 8 条最高余弦 0.648，可答中位 0.726。取 0.65 时库外零误召回；
+         * 与 {@link Vector#getMinScore()} 同值是刻意的——向量只有在「自己足够自信」时
+         * 才能单独支撑一个答案。降到 0.60 会把「可以开发票吗」这类库外问题放进结果。
+         * 两边分布本身是重叠的（可答最低 0.605 低于库外最高 0.648），单靠余弦无法分开；
+         * 但「BM25 零命中」这个特征能把它们切开——可答问题普遍有字面命中。
          * <p>
          * 因此这条规则只在 BM25 零命中时生效：此时向量是唯一证据，要求更强才算数；
          * BM25 有命中说明字面证据已成立，向量分多低都不该否决它。
          * 设 0 表示关闭该门禁（退回「向量命中即算有答案」的旧行为）。
          */
-        private double vectorOnlyMinScore = 0.66;
+        private double vectorOnlyMinScore = 0.65;
 
         public int getRrfK() {
             return rrfK;
